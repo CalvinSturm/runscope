@@ -1,0 +1,40 @@
+{
+  "project": {
+    "slug": "localagent",
+    "display_name": "LocalAgent"
+  },
+  "suite": "eval_smoke",
+  "scenario": "assistant_basic",
+  "label": "fixture run",
+  "run_id": "la-fixture-001",
+  "status": "pass",
+  "started_at": "2026-03-05T17:17:04Z",
+  "finished_at": "2026-03-05T17:18:11Z",
+  "duration_ms": 67000,
+  "git": {
+    "commit_sha": "abc123def456",
+    "branch": "main",
+    "dirty": false
+  },
+  "command": [
+    "localagent",
+    "eval",
+    "--scenario",
+    "assistant_basic"
+  ],
+  "cwd": "C:/work/localagent",
+  "dataset": "smoke_set_v1",
+  "input_count": 3,
+  "metrics": [
+    {
+      "key": "score",
+      "group_name": "",
+      "value_num": 0.97,
+      "unit": "ratio",
+      "direction": "higher_is_better",
+      "is_primary": true
+    }
+  ],
+  "engine": "local",
+  "pipeline": "eval"
+}

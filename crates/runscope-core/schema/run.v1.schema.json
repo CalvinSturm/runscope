@@ -1,0 +1,439 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RunManifestV1",
+  "type": "object",
+  "required": [
+    "artifacts",
+    "identity",
+    "metrics",
+    "project",
+    "run_id",
+    "runtime",
+    "schema_version",
+    "source",
+    "summary"
+  ],
+  "properties": {
+    "adapter_payload": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "artifacts": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ArtifactRecord"
+      }
+    },
+    "environment": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/EnvironmentContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "git": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/GitContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "identity": {
+      "$ref": "#/definitions/RunIdentity"
+    },
+    "metrics": {
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/MetricRecord"
+      }
+    },
+    "project": {
+      "$ref": "#/definitions/ProjectRef"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "runtime": {
+      "$ref": "#/definitions/RuntimeContext"
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/definitions/RunSource"
+    },
+    "summary": {
+      "$ref": "#/definitions/SummaryContext"
+    },
+    "workload": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/WorkloadContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "ArtifactRecord": {
+      "type": "object",
+      "required": [
+        "media_type",
+        "rel_path",
+        "role"
+      ],
+      "properties": {
+        "media_type": {
+          "type": "string"
+        },
+        "rel_path": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "EnvironmentContext": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cpu": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "gpu": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "machine_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "os": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "precision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExecStatus": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "error",
+        "unknown"
+      ]
+    },
+    "GitContext": {
+      "type": "object",
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit_sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dirty": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "MetricDirection": {
+      "type": "string",
+      "enum": [
+        "higher_is_better",
+        "lower_is_better",
+        "target",
+        "none"
+      ]
+    },
+    "MetricRecord": {
+      "type": "object",
+      "required": [
+        "direction",
+        "key"
+      ],
+      "properties": {
+        "direction": {
+          "$ref": "#/definitions/MetricDirection"
+        },
+        "group_name": {
+          "type": "string"
+        },
+        "is_primary": {
+          "default": false,
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value_num": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "value_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProjectRef": {
+      "type": "object",
+      "required": [
+        "display_name",
+        "slug"
+      ],
+      "properties": {
+        "display_name": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunIdentity": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scenario": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suite": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RunSource": {
+      "type": "object",
+      "required": [
+        "adapter",
+        "ingested_at",
+        "source_kind"
+      ],
+      "properties": {
+        "adapter": {
+          "type": "string"
+        },
+        "external_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ingested_at": {
+          "type": "string"
+        },
+        "source_kind": {
+          "$ref": "#/definitions/SourceKind"
+        },
+        "source_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuntimeContext": {
+      "type": "object",
+      "required": [
+        "exec_status"
+      ],
+      "properties": {
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        },
+        "exec_status": {
+          "$ref": "#/definitions/ExecStatus"
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "finished_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SourceKind": {
+      "type": "string",
+      "enum": [
+        "artifact_dir",
+        "manual_record",
+        "imported_manifest"
+      ]
+    },
+    "SummaryContext": {
+      "type": "object",
+      "required": [
+        "error_count",
+        "warning_count"
+      ],
+      "properties": {
+        "error_count": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "warning_count": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "WorkloadContext": {
+      "type": "object",
+      "properties": {
+        "command_argv": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dataset": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display_command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "env_snapshot_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0.0
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

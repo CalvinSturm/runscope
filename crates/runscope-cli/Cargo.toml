@@ -1,0 +1,15 @@
+[package]
+name = "runscope-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "runscope"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.97"
+clap = { version = "4.5.31", features = ["derive"] }
+runscope-core = { path = "../runscope-core" }
+serde_json = "1.0.139"
