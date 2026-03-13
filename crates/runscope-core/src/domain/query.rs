@@ -33,6 +33,7 @@ pub struct RunListItem {
     pub backend: Option<String>,
     pub model: Option<String>,
     pub precision: Option<String>,
+    pub warning_count: u32,
     pub primary_metrics: Vec<MetricRecord>,
     pub tags: Vec<String>,
 }

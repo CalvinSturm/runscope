@@ -101,7 +101,8 @@ fn query_run_items(
             runs.duration_ms,
             runs.backend,
             runs.model,
-            runs.precision
+            runs.precision,
+            runs.warning_count
          FROM runs
          JOIN projects ON projects.id = runs.project_id
          {where_sql}
@@ -127,6 +128,7 @@ fn query_run_items(
             row.get::<_, Option<String>>(10)?,
             row.get::<_, Option<String>>(11)?,
             row.get::<_, Option<String>>(12)?,
+            row.get::<_, i64>(13)?,
         ))
     })?;
 
@@ -146,6 +148,7 @@ fn query_run_items(
             backend,
             model,
             precision,
+            warning_count,
         ) = row?;
         items.push(RunListItem {
             primary_metrics: load_primary_metrics(conn, &run_id)?,
@@ -163,6 +166,7 @@ fn query_run_items(
             backend,
             model,
             precision,
+            warning_count: warning_count.max(0) as u32,
         });
     }
 

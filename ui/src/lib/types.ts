@@ -106,6 +106,7 @@ export interface RunListItem {
   backend: string | null;
   model: string | null;
   precision: string | null;
+  warning_count: number;
   primary_metrics: MetricRecord[];
   tags: string[];
 }

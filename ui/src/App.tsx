@@ -43,6 +43,9 @@ type FilterState = {
   precision: string;
 };
 
+type MetricSortMode = "severity" | "abs_delta" | "pct_delta" | "primary";
+type CompactSortMode = "latest" | "warnings" | "duration" | "primary_metric";
+
 const initialFilters: FilterState = {
   queryText: "",
   project: "",
@@ -80,8 +83,13 @@ export default function App() {
     thresholdValue: "5",
   });
   const [compactList, setCompactList] = useState(false);
+  const [compactSortMode, setCompactSortMode] = useState<CompactSortMode>("latest");
+  const [compactMetricKey, setCompactMetricKey] = useState("");
   const [showAllPrimaryMetrics, setShowAllPrimaryMetrics] = useState(false);
   const [pathNotice, setPathNotice] = useState<string | null>(null);
+  const [metricSortMode, setMetricSortMode] = useState<MetricSortMode>("severity");
+  const [primaryOnlyMetricDiffs, setPrimaryOnlyMetricDiffs] = useState(false);
+  const [changedOnlyMetricDiffs, setChangedOnlyMetricDiffs] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -367,6 +375,7 @@ export default function App() {
   const compareTriggeredFlags =
     compareReport?.regression_flags.filter((flag) => flag.status === "triggered") ?? [];
   const compareHighlights = selectCompareHighlights(compareReport, primaryMetrics);
+  const warningGroups = categorizeWarnings(detail?.warnings ?? [], candidateDetail?.warnings ?? []);
   const compareStatusChanged =
     detail && candidateDetail
       ? detail.manifest.runtime.exec_status !== candidateDetail.manifest.runtime.exec_status
@@ -379,6 +388,13 @@ export default function App() {
     detail && candidateDetail
       ? candidateDetail.manifest.artifacts.length - detail.manifest.artifacts.length
       : null;
+  const sortedMetricDiffs = sortMetricDiffs(
+    compareReport?.metric_diffs ?? [],
+    primaryMetrics,
+    compareTriggeredFlags,
+    metricSortMode,
+    { primaryOnly: primaryOnlyMetricDiffs, changedOnly: changedOnlyMetricDiffs },
+  );
   const filterChips = [
     {
       label: "LocalAgent",
@@ -426,6 +442,18 @@ export default function App() {
         })),
     },
   ];
+  const compactMetricOptions = Array.from(
+    new Set(
+      items.flatMap((item) => item.primary_metrics.map((metric) => metric.key)),
+    ),
+  ).sort((left, right) => left.localeCompare(right));
+  const sortedItems = sortRunsForCompactMode(items, compactSortMode, compactMetricKey);
+
+  useEffect(() => {
+    if (!compactMetricKey && compactMetricOptions.length > 0) {
+      setCompactMetricKey(compactMetricOptions[0]);
+    }
+  }, [compactMetricKey, compactMetricOptions]);
 
   async function refreshSelectedRun(runId: string) {
     const nextDetail = await getRun(runId);
@@ -651,14 +679,64 @@ export default function App() {
               ) : null}
             </div>
           </section>
-          <div className="runs-list">
+          {compactList ? (
+            <section className="compact-sort-bar">
+              <span className="section-label">Compact Sort</span>
+              <div className="compact-sort-controls">
+                <button
+                  className={`filter-chip ${compactSortMode === "latest" ? "active" : ""}`}
+                  onClick={() => setCompactSortMode("latest")}
+                  type="button"
+                >
+                  Latest
+                </button>
+                <button
+                  className={`filter-chip ${compactSortMode === "warnings" ? "active" : ""}`}
+                  onClick={() => setCompactSortMode("warnings")}
+                  type="button"
+                >
+                  Warnings
+                </button>
+                <button
+                  className={`filter-chip ${compactSortMode === "duration" ? "active" : ""}`}
+                  onClick={() => setCompactSortMode("duration")}
+                  type="button"
+                >
+                  Duration
+                </button>
+                <button
+                  className={`filter-chip ${compactSortMode === "primary_metric" ? "active" : ""}`}
+                  onClick={() => setCompactSortMode("primary_metric")}
+                  type="button"
+                >
+                  Primary Metric
+                </button>
+                {compactSortMode === "primary_metric" ? (
+                  <label className="compact-metric-select">
+                    Metric
+                    <select
+                      value={compactMetricKey}
+                      onChange={(event) => setCompactMetricKey(event.target.value)}
+                    >
+                      {compactMetricOptions.map((key) => (
+                        <option key={key} value={key}>
+                          {compactMetricLabel(key)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+          <div className={`runs-list ${compactList ? "compact" : ""}`}>
             {items.length === 0 && !loadingList ? (
               <div className="empty-state">
                 <h3>No runs matched the current filters.</h3>
                 <p>Ingest a LocalAgent or VideoForge artifact directory to populate the dashboard.</p>
               </div>
             ) : null}
-            {items.map((item) => {
+            {sortedItems.map((item) => {
               const isSelected = selectedRunId === item.run_id;
               const isCompareTarget = compareTargetId === item.run_id;
               const isActiveBaseline = activeBaselineRunIds.has(item.run_id);
@@ -696,12 +774,22 @@ export default function App() {
                       <span>{formatOptionalText(item.scenario)}</span>
                     </div>
                   ) : null}
-                  <div className="run-card-meta">
-                    <span>{formatOptionalText(item.backend)}</span>
-                    <span>{formatOptionalText(item.model)}</span>
-                    <span>{formatOptionalText(item.precision)}</span>
-                    <span>{formatDuration(item.duration_ms)}</span>
-                  </div>
+                  {compactList ? (
+                    <div className="compact-inline-meta">
+                      <span>{formatOptionalText(item.backend)}</span>
+                      <span>{formatOptionalText(item.model)}</span>
+                      <span className="active-triage-slot">
+                        {renderCompactTriageSignal(item, compactSortMode, compactMetricKey)}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="run-card-meta">
+                      <span>{formatOptionalText(item.backend)}</span>
+                      <span>{formatOptionalText(item.model)}</span>
+                      <span>{formatOptionalText(item.precision)}</span>
+                      <span>{formatDuration(item.duration_ms)}</span>
+                    </div>
+                  )}
                   {!compactList ? (
                     <div className="metric-row">
                       {visibleMetrics.length > 0 ? (
@@ -730,7 +818,9 @@ export default function App() {
                           ? `${compactMetricLabel(visibleMetrics[0].key)} ${formatMetric(visibleMetrics[0])}`
                           : "No primary metrics"}
                       </span>
-                      {hiddenMetricCount > 0 ? <span>+{hiddenMetricCount} more</span> : null}
+                      <span className="compact-summary-right">
+                        {hiddenMetricCount > 0 ? `+${hiddenMetricCount} more` : EMPTY_TOKEN}
+                      </span>
                     </div>
                   )}
                   {!compactList && item.tags.length > 0 ? (
@@ -743,8 +833,8 @@ export default function App() {
                     </div>
                   ) : null}
                   <div className="card-actions">
-                    <span className="quiet">
-                      {isSelected ? "Base run" : isCompareTarget ? "Candidate run" : "Click to inspect"}
+                    <span className="quiet compact-card-state">
+                      {isSelected ? "Base run" : isCompareTarget ? "Candidate run" : "Inspect"}
                     </span>
                     <div className="card-action-buttons">
                       {!isSelected ? (
@@ -923,6 +1013,26 @@ export default function App() {
                   </Panel>
 
                   <Panel
+                    title="Warning Delta"
+                    subtitle="Shared, introduced, and resolved warnings split so newly suspicious runs stand out immediately."
+                  >
+                    <div className="warning-groups">
+                      <WarningBucket title="Introduced" items={warningGroups.introduced} tone="alert" />
+                      <WarningBucket title="Resolved" items={warningGroups.resolved} tone="ok" />
+                      <WarningBucket title="Candidate Only" items={warningGroups.candidateOnly} />
+                      <WarningBucket title="Base Only" items={warningGroups.baseOnly} />
+                    </div>
+                    {warningGroups.shared.length > 0 ? (
+                      <div className="warning-shared">
+                        <span className="section-label">Shared warnings</span>
+                        <strong>{warningGroups.shared.length}</strong>
+                      </div>
+                    ) : (
+                      <span className="quiet">No shared warnings across the two runs.</span>
+                    )}
+                  </Panel>
+
+                  <Panel
                     title="Regression Flags"
                     subtitle="Candidate run evaluated against the active baseline for the same scope using stored regression rules."
                   >
@@ -978,6 +1088,52 @@ export default function App() {
                   </Panel>
 
                   <Panel title="Metric Diffs" subtitle="Absolute and percent deltas are computed in core when both values are numeric.">
+                    <div className="metric-diff-toolbar">
+                      <div className="filter-chip-row metric-diff-filters">
+                        <button
+                          className={`filter-chip ${metricSortMode === "severity" ? "active" : ""}`}
+                          onClick={() => setMetricSortMode("severity")}
+                          type="button"
+                        >
+                          Severity
+                        </button>
+                        <button
+                          className={`filter-chip ${metricSortMode === "abs_delta" ? "active" : ""}`}
+                          onClick={() => setMetricSortMode("abs_delta")}
+                          type="button"
+                        >
+                          Abs Delta
+                        </button>
+                        <button
+                          className={`filter-chip ${metricSortMode === "pct_delta" ? "active" : ""}`}
+                          onClick={() => setMetricSortMode("pct_delta")}
+                          type="button"
+                        >
+                          Percent Delta
+                        </button>
+                        <button
+                          className={`filter-chip ${metricSortMode === "primary" ? "active" : ""}`}
+                          onClick={() => setMetricSortMode("primary")}
+                          type="button"
+                        >
+                          Primary First
+                        </button>
+                        <button
+                          className={`filter-chip ${primaryOnlyMetricDiffs ? "active" : ""}`}
+                          onClick={() => setPrimaryOnlyMetricDiffs((current) => !current)}
+                          type="button"
+                        >
+                          Primary Only
+                        </button>
+                        <button
+                          className={`filter-chip ${changedOnlyMetricDiffs ? "active" : ""}`}
+                          onClick={() => setChangedOnlyMetricDiffs((current) => !current)}
+                          type="button"
+                        >
+                          Changed Only
+                        </button>
+                      </div>
+                    </div>
                     <table className="data-table">
                       <thead>
                         <tr>
@@ -989,7 +1145,8 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {compareReport.metric_diffs.map((diff) => (
+                        {sortedMetricDiffs.length > 0 ? (
+                          sortedMetricDiffs.map((diff) => (
                           <tr key={`${diff.group_name}:${diff.key}`}>
                             <td>
                               <div className="metric-name-cell">
@@ -1002,7 +1159,14 @@ export default function App() {
                             <td>{formatNumericDelta(diff.abs_delta, diff.unit)}</td>
                             <td>{formatPercentDelta(diff.pct_delta)}</td>
                           </tr>
-                        ))}
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={5} className="quiet">
+                              No metric diffs matched the current compare filters.
+                            </td>
+                          </tr>
+                        )}
                       </tbody>
                     </table>
                   </Panel>
@@ -1351,6 +1515,187 @@ function formatDiffMetric(valueNum: number | null, valueText: string | null, uni
   return formatOptionalText(valueText);
 }
 
+function sortMetricDiffs(
+  metricDiffs: CompareReport["metric_diffs"],
+  primaryMetrics: MetricRecord[],
+  triggeredFlags: CompareReport["regression_flags"],
+  sortMode: MetricSortMode,
+  filters: { primaryOnly: boolean; changedOnly: boolean },
+) {
+  const primaryKeys = new Set(primaryMetrics.map((metric) => metric.key));
+  const triggeredKeys = new Set(
+    triggeredFlags.filter((flag) => flag.status === "triggered").map((flag) => flag.metric_key),
+  );
+
+  return [...metricDiffs]
+    .filter((diff) => {
+      const changed =
+        diff.abs_delta != null ||
+        diff.pct_delta != null ||
+        diff.left_text !== diff.right_text ||
+        diff.left_num !== diff.right_num;
+      if (filters.primaryOnly && !primaryKeys.has(diff.key)) {
+        return false;
+      }
+      if (filters.changedOnly && !changed) {
+        return false;
+      }
+      return true;
+    })
+    .sort((left, right) => {
+      const leftPrimary = primaryKeys.has(left.key) ? 1 : 0;
+      const rightPrimary = primaryKeys.has(right.key) ? 1 : 0;
+      const leftTriggered = triggeredKeys.has(left.key) ? 1 : 0;
+      const rightTriggered = triggeredKeys.has(right.key) ? 1 : 0;
+
+      if (sortMode === "severity") {
+        if (leftTriggered !== rightTriggered) {
+          return rightTriggered - leftTriggered;
+        }
+        if (leftPrimary !== rightPrimary) {
+          return rightPrimary - leftPrimary;
+        }
+        return Math.abs(right.abs_delta ?? 0) - Math.abs(left.abs_delta ?? 0);
+      }
+      if (sortMode === "abs_delta") {
+        return Math.abs(right.abs_delta ?? 0) - Math.abs(left.abs_delta ?? 0);
+      }
+      if (sortMode === "pct_delta") {
+        return Math.abs(right.pct_delta ?? 0) - Math.abs(left.pct_delta ?? 0);
+      }
+      if (leftPrimary !== rightPrimary) {
+        return rightPrimary - leftPrimary;
+      }
+      return Math.abs(right.abs_delta ?? 0) - Math.abs(left.abs_delta ?? 0);
+    });
+}
+
+function sortRunsForCompactMode(
+  items: RunListItem[],
+  sortMode: CompactSortMode,
+  metricKey: string,
+) {
+  return [...items].sort((left, right) => {
+    if (sortMode === "latest") {
+      return compareNullableDate(right.started_at, left.started_at);
+    }
+    if (sortMode === "warnings") {
+      if (right.warning_count !== left.warning_count) {
+        return right.warning_count - left.warning_count;
+      }
+      return compareNullableDate(right.started_at, left.started_at);
+    }
+    if (sortMode === "duration") {
+      const durationDelta = (right.duration_ms ?? -1) - (left.duration_ms ?? -1);
+      if (durationDelta !== 0) {
+        return durationDelta;
+      }
+      return compareNullableDate(right.started_at, left.started_at);
+    }
+
+    const leftMetric = extractPrimaryMetricValue(left, metricKey);
+    const rightMetric = extractPrimaryMetricValue(right, metricKey);
+    if (rightMetric !== leftMetric) {
+      return rightMetric - leftMetric;
+    }
+    return compareNullableDate(right.started_at, left.started_at);
+  });
+}
+
+function extractPrimaryMetricValue(item: RunListItem, metricKey: string): number {
+  const metric = item.primary_metrics.find((entry) => entry.key === metricKey);
+  return metric?.value_num ?? Number.NEGATIVE_INFINITY;
+}
+
+function compareNullableDate(left: string | null, right: string | null): number {
+  const leftValue = left ? new Date(left).getTime() : Number.NEGATIVE_INFINITY;
+  const rightValue = right ? new Date(right).getTime() : Number.NEGATIVE_INFINITY;
+  return leftValue - rightValue;
+}
+
+function renderCompactTriageSignal(
+  item: RunListItem,
+  sortMode: CompactSortMode,
+  metricKey: string,
+) {
+  if (sortMode === "warnings") {
+    return (
+      <>
+        <strong>{item.warning_count}</strong>
+        <span>warnings</span>
+      </>
+    );
+  }
+
+  if (sortMode === "duration") {
+    return (
+      <>
+        <strong>{formatDuration(item.duration_ms)}</strong>
+        <span>duration</span>
+      </>
+    );
+  }
+
+  if (sortMode === "primary_metric") {
+    const metric = item.primary_metrics.find((entry) => entry.key === metricKey);
+    return (
+      <>
+        <strong>{metric ? formatMetric(metric) : EMPTY_TOKEN}</strong>
+        <span>
+          {metric
+            ? `${compactMetricLabel(metric.key)} · ${metric.direction.replace(/_/g, " ")}`
+            : compactMetricLabel(metricKey)}
+        </span>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <strong>{formatRelativeAge(item.started_at)}</strong>
+      <span>{formatDateTime(item.started_at)}</span>
+    </>
+  );
+}
+
+function categorizeWarnings(baseWarnings: RunDetail["warnings"], candidateWarnings: RunDetail["warnings"]) {
+  const baseMap = new Map(baseWarnings.map((warning) => [warningIdentity(warning), warning]));
+  const candidateMap = new Map(
+    candidateWarnings.map((warning) => [warningIdentity(warning), warning]),
+  );
+  const shared: RunDetail["warnings"] = [];
+  const baseOnly: RunDetail["warnings"] = [];
+  const candidateOnly: RunDetail["warnings"] = [];
+
+  baseWarnings.forEach((warning) => {
+    const key = warningIdentity(warning);
+    if (candidateMap.has(key)) {
+      shared.push(warning);
+    } else {
+      baseOnly.push(warning);
+    }
+  });
+
+  candidateWarnings.forEach((warning) => {
+    const key = warningIdentity(warning);
+    if (!baseMap.has(key)) {
+      candidateOnly.push(warning);
+    }
+  });
+
+  return {
+    shared,
+    baseOnly,
+    candidateOnly,
+    introduced: candidateOnly,
+    resolved: baseOnly,
+  };
+}
+
+function warningIdentity(warning: RunDetail["warnings"][number]): string {
+  return `${warning.code}:${warning.message}`;
+}
+
 function selectCuratedMetrics(metrics: MetricRecord[]): MetricRecord[] {
   return [...metrics].sort((left, right) => {
     const leftIsGeneric = left.key.includes("by_model") ? 1 : 0;
@@ -1473,6 +1818,31 @@ function CompareRunCard(props: { title: string; item: RunListItem | null }) {
         </>
       ) : (
         <span className="quiet">No run selected</span>
+      )}
+    </article>
+  );
+}
+
+function WarningBucket(props: {
+  title: string;
+  items: RunDetail["warnings"];
+  tone?: "alert" | "ok";
+}) {
+  return (
+    <article className={`warning-bucket ${props.tone ?? ""}`}>
+      <div className="warning-bucket-header">
+        <span className="section-label">{props.title}</span>
+        <strong>{props.items.length}</strong>
+      </div>
+      {props.items.length > 0 ? (
+        props.items.slice(0, 3).map((warning) => (
+          <div className="warning-bucket-item" key={`${warning.created_at}:${warning.code}:${warning.message}`}>
+            <strong>{warning.code}</strong>
+            <span>{warning.message}</span>
+          </div>
+        ))
+      ) : (
+        <span className="quiet">None</span>
       )}
     </article>
   );
