@@ -116,6 +116,22 @@ This keeps cross-project queries stable while preserving source-specific details
 ### Compare performance between two backend runs
 See whether a TensorRT run regressed against the active FP16 baseline on the same model and dataset.
 
+### Ingest a VideoForge export bundle
+
+1. Run VideoForge with `VIDEOFORGE_ENABLE_RUN_ARTIFACTS=1`.
+2. Locate the output-adjacent `.videoforge_runs/<job-id>/` directory.
+3. Ingest it directly:
+
+```bash
+runscope ingest "<path-to-output>/.videoforge_runs/<job-id>"
+```
+
+RunScope will prefer `videoforge_run.json` when present, but it can also synthesize a run from the schema-versioned VideoForge bundle files:
+
+- `videoforge.run_manifest.v1.json`
+- `videoforge.runtime_config_snapshot.v1.json`
+- `videoforge.run_observed_metrics.v1.json`
+
 ### Revisit a manual debugging session
 Open the exact command, cwd, env snapshot reference, notes, and logs tied to a failure that happened two weeks ago.
 

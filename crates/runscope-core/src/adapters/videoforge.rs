@@ -430,7 +430,15 @@ fn infer_copy_target(relative: &Path, file_name: &str) -> (&'static str, String,
         return ("logs", "stderr_log".to_string(), "text/plain".to_string());
     }
     if extension == "json" {
-        let role = if lower_name.contains("manifest") {
+        let role = if lower_name == "videoforge.run_manifest.v1.json" {
+            "videoforge_run_manifest_v1"
+        } else if lower_name == "videoforge.runtime_config_snapshot.v1.json" {
+            "videoforge_runtime_config_snapshot_v1"
+        } else if lower_name == "videoforge.run_observed_metrics.v1.json" {
+            "videoforge_run_observed_metrics_v1"
+        } else if lower_name == "videoforge_run.json" {
+            "videoforge_runscope_bundle"
+        } else if lower_name.contains("manifest") {
             "raw_source_manifest"
         } else {
             "report_json"
@@ -697,7 +705,17 @@ mod tests {
             .manifest
             .artifacts
             .iter()
-            .any(|artifact| artifact.rel_path.ends_with("videoforge.run_manifest.v1.json")));
+            .any(|artifact| artifact.role == "videoforge_run_manifest_v1"));
+        assert!(parsed
+            .manifest
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.role == "videoforge_runtime_config_snapshot_v1"));
+        assert!(parsed
+            .manifest
+            .artifacts
+            .iter()
+            .any(|artifact| artifact.role == "videoforge_run_observed_metrics_v1"));
     }
 
     fn fixture_dir() -> std::path::PathBuf {
