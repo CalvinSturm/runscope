@@ -45,6 +45,8 @@ type FilterState = {
 
 type MetricSortMode = "severity" | "abs_delta" | "pct_delta" | "primary";
 type CompactSortMode = "latest" | "warnings" | "duration" | "primary_metric";
+type CompareSemantic = "improved" | "regressed" | "changed" | "unresolved" | "stable";
+type CompareSemanticFilter = "all" | "regressed" | "improved" | "changed" | "unresolved";
 
 const initialFilters: FilterState = {
   queryText: "",
@@ -90,6 +92,11 @@ export default function App() {
   const [metricSortMode, setMetricSortMode] = useState<MetricSortMode>("severity");
   const [primaryOnlyMetricDiffs, setPrimaryOnlyMetricDiffs] = useState(false);
   const [changedOnlyMetricDiffs, setChangedOnlyMetricDiffs] = useState(true);
+  const [compareSemanticMap, setCompareSemanticMap] = useState<Record<string, CompareSemantic>>({});
+  const [loadingCompareSemantics, setLoadingCompareSemantics] = useState(false);
+  const [compareSemanticFilter, setCompareSemanticFilter] =
+    useState<CompareSemanticFilter>("all");
+  const [compareSemanticSort, setCompareSemanticSort] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -262,6 +269,64 @@ export default function App() {
   }, [compareTargetId, selectedRunId]);
 
   useEffect(() => {
+    if (!selectedRunId || items.length === 0) {
+      setCompareSemanticMap({});
+      setLoadingCompareSemantics(false);
+      return;
+    }
+
+    const candidateItems = items.filter((item) => item.run_id !== selectedRunId);
+    if (candidateItems.length === 0) {
+      setCompareSemanticMap({});
+      setLoadingCompareSemantics(false);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      setLoadingCompareSemantics(true);
+      try {
+        const reports = await Promise.all(
+          candidateItems.map(async (item) => ({
+            runId: item.run_id,
+            report: await compareRuns(selectedRunId, item.run_id),
+          })),
+        );
+        if (cancelled) {
+          return;
+        }
+        const nextMap = reports.reduce<Record<string, CompareSemantic>>((accumulator, entry) => {
+          const candidateItem = candidateItems.find((item) => item.run_id === entry.runId);
+          const baseItem = items.find((item) => item.run_id === selectedRunId);
+          if (!candidateItem || !baseItem) {
+            return accumulator;
+          }
+          accumulator[entry.runId] = deriveCompareSemanticFromReport(
+            entry.report,
+            baseItem,
+            candidateItem,
+          );
+          return accumulator;
+        }, {});
+        setCompareSemanticMap(nextMap);
+      } catch (caught) {
+        if (!cancelled) {
+          setError(String(caught));
+          setCompareSemanticMap({});
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingCompareSemantics(false);
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [items, selectedRunId]);
+
+  useEffect(() => {
     if (!detail) {
       setProjectBaselines([]);
       setRegressionRules([]);
@@ -415,9 +480,36 @@ export default function App() {
         ? "The candidate execution outcome differs from the base even without a triggered rule."
         : warningGroups.introduced.length > 0
           ? "Warning behavior changed even though no triggered regression rule fired."
-          : compareHighlights.length > 0
+        : compareHighlights.length > 0
             ? "Numeric metric movement exists but did not trigger a regression rule."
             : "No triggered regressions, warning shifts, or top-level metric movement were detected.";
+  const semanticFlagKeys = new Set(compareTriggeredFlags.map((flag) => flag.metric_key));
+  const rankedSemanticHighlights = compareHighlights.map((diff) => ({
+    diff,
+    semantic: classifyMetricDiffSemantic(diff, semanticFlagKeys.has(diff.key)),
+  }));
+  const compareSemantic =
+    compareTriggeredFlags.length > 0
+      ? "regressed"
+      : compareStatusChanged || warningGroups.introduced.length > 0
+        ? "changed"
+        : rankedSemanticHighlights.some((entry) => entry.semantic === "regressed")
+          ? "regressed"
+          : rankedSemanticHighlights.some((entry) => entry.semantic === "improved")
+            ? "improved"
+            : compareReport && compareReport.metric_diffs.some((diff) => hasMeaningfulMetricChange(diff))
+              ? "changed"
+              : compareReport
+                ? "stable"
+                : "unresolved";
+  const compareSemanticLabel = formatCompareSemantic(compareSemantic);
+  const semanticCounts = Object.values(compareSemanticMap).reduce<Record<string, number>>(
+    (accumulator, semantic) => {
+      accumulator[semantic] = (accumulator[semantic] ?? 0) + 1;
+      return accumulator;
+    },
+    {},
+  );
   const filterChips = [
     {
       label: "LocalAgent",
@@ -471,6 +563,30 @@ export default function App() {
     ),
   ).sort((left, right) => left.localeCompare(right));
   const sortedItems = sortRunsForCompactMode(items, compactSortMode, compactMetricKey);
+  const compareFilteredItems = sortedItems
+    .filter((item) => {
+      if (item.run_id === selectedRunId || compareSemanticFilter === "all") {
+        return true;
+      }
+      return compareSemanticMap[item.run_id] === compareSemanticFilter;
+    })
+    .sort((left, right) => {
+      if (!compareSemanticSort) {
+        return 0;
+      }
+      if (left.run_id === selectedRunId) {
+        return -1;
+      }
+      if (right.run_id === selectedRunId) {
+        return 1;
+      }
+      const leftRank = semanticSortRank(compareSemanticMap[left.run_id]);
+      const rightRank = semanticSortRank(compareSemanticMap[right.run_id]);
+      if (leftRank !== rightRank) {
+        return rightRank - leftRank;
+      }
+      return 0;
+    });
 
   useEffect(() => {
     if (!compactMetricKey && compactMetricOptions.length > 0) {
@@ -752,6 +868,35 @@ export default function App() {
               </div>
             </section>
           ) : null}
+          {compareMode ? (
+            <section className="compare-semantic-bar">
+              <div className="compare-semantic-header">
+                <span className="section-label">Compare Outcome</span>
+                {loadingCompareSemantics ? <span className="quiet">Refreshing outcomes...</span> : null}
+              </div>
+              <div className="compare-semantic-controls">
+                <button
+                  className={`filter-chip ${compareSemanticSort ? "active" : ""}`}
+                  onClick={() => setCompareSemanticSort((current) => !current)}
+                  type="button"
+                >
+                  Outcome Rank
+                </button>
+                {(["all", "regressed", "improved", "changed", "unresolved"] as const).map((semantic) => (
+                  <button
+                    key={semantic}
+                    className={`filter-chip ${compareSemanticFilter === semantic ? "active" : ""}`}
+                    onClick={() => setCompareSemanticFilter(semantic)}
+                    type="button"
+                  >
+                    {semantic === "all"
+                      ? "All"
+                      : `${formatCompareSemantic(semantic)} ${semanticCounts[semantic] ?? 0}`}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
           <div className={`runs-list ${compactList ? "compact" : ""}`}>
             {items.length === 0 && !loadingList ? (
               <div className="empty-state">
@@ -759,12 +904,14 @@ export default function App() {
                 <p>Ingest a LocalAgent or VideoForge artifact directory to populate the dashboard.</p>
               </div>
             ) : null}
-            {sortedItems.map((item) => {
+            {(compareMode ? compareFilteredItems : sortedItems).map((item) => {
               const isSelected = selectedRunId === item.run_id;
               const isCompareTarget = compareTargetId === item.run_id;
               const isActiveBaseline = activeBaselineRunIds.has(item.run_id);
               const hasTriggeredRegression =
                 isCompareTarget && compareTriggeredFlags.length > 0;
+              const compareSemanticForRow =
+                !isSelected && compareMode ? compareSemanticMap[item.run_id] ?? null : null;
               const visibleMetrics = item.primary_metrics.slice(0, 3);
               const hiddenMetricCount = Math.max(0, item.primary_metrics.length - visibleMetrics.length);
               const runTitle = item.label ?? item.scenario ?? item.run_id;
@@ -780,6 +927,11 @@ export default function App() {
                     {!compactList ? <span className="adapter-pill">{item.adapter}</span> : null}
                     {isActiveBaseline ? <span className="signal-pill baseline">baseline</span> : null}
                     {isCompareTarget ? <span className="signal-pill candidate">candidate</span> : null}
+                    {compareSemanticForRow && compareSemanticForRow !== "stable" ? (
+                      <span className={`signal-pill semantic ${compareSemanticForRow}`}>
+                        {formatCompareSemantic(compareSemanticForRow)}
+                      </span>
+                    ) : null}
                     {hasTriggeredRegression ? (
                       <span className="signal-pill regression">
                         {compareTriggeredFlags.length} regression
@@ -924,19 +1076,24 @@ export default function App() {
                   </article>
                   <article className="footer-summary-item compare-focus">
                     <span className="section-label">Compare Focus</span>
-                    <strong>
-                      {compareTriggeredFlags.length > 0
-                        ? `${compareTriggeredFlags.length} triggered flag${compareTriggeredFlags.length === 1 ? "" : "s"}`
-                        : compareStatusChanged
-                          ? "Status changed"
-                          : "No triggered regressions"}
-                    </strong>
+                    <strong>{compareSemanticLabel}</strong>
                     <small>
                       {compareTriggeredFlags.length > 0
                         ? "Candidate needs review against the active baseline"
                         : compareStatusChanged
                           ? "Candidate execution differs from the base run"
-                          : "Use metric and warning deltas to confirm stability"}
+                        : "Use metric and warning deltas to confirm stability"}
+                    </small>
+                  </article>
+                  <article className="footer-summary-item">
+                    <span className="section-label">Outcome Controls</span>
+                    <strong>
+                      {compareSemanticFilter === "all"
+                        ? "All outcomes"
+                        : formatCompareSemantic(compareSemanticFilter)}
+                    </strong>
+                    <small>
+                      {compareSemanticSort ? "Outcome rank enabled" : "Outcome rank off"}
                     </small>
                   </article>
                 </div>
@@ -1169,6 +1326,15 @@ export default function App() {
                               ? `${formatNumericDelta(compareHighlights[0].abs_delta, compareHighlights[0].unit)} · ${formatPercentDelta(compareHighlights[0].pct_delta)}`
                               : compareDecisionSummary}
                           </small>
+                          {compareHighlights[0] ? (
+                            <span
+                              className={`semantic-badge ${classifyMetricDiffSemantic(compareHighlights[0], semanticFlagKeys.has(compareHighlights[0].key))}`}
+                            >
+                              {formatCompareSemantic(
+                                classifyMetricDiffSemantic(compareHighlights[0], semanticFlagKeys.has(compareHighlights[0].key)),
+                              )}
+                            </span>
+                          ) : null}
                         </article>
                         <article className={`overview-card ${warningDelta && warningDelta !== 0 ? "changed" : ""}`}>
                           <span className="section-label">Warning Shift</span>
@@ -1188,8 +1354,11 @@ export default function App() {
                     >
                       <div className="compare-highlight-grid ranked">
                         {compareHighlights.length > 0 ? (
-                          compareHighlights.map((diff) => (
-                            <article className="overview-card metric-delta" key={`${diff.group_name}:${diff.key}`}>
+                          rankedSemanticHighlights.map(({ diff, semantic }) => (
+                            <article
+                              className={`overview-card metric-delta semantic-${semantic}`}
+                              key={`${diff.group_name}:${diff.key}`}
+                            >
                               <span className="section-label">{compactMetricLabel(diff.key)}</span>
                               <strong>
                                 {formatDiffMetric(diff.left_num, diff.left_text, diff.unit)} →{" "}
@@ -1198,6 +1367,9 @@ export default function App() {
                               <small>
                                 {formatNumericDelta(diff.abs_delta, diff.unit)} · {formatPercentDelta(diff.pct_delta)}
                               </small>
+                              <span className={`semantic-badge ${semantic}`}>
+                                {formatCompareSemantic(semantic)}
+                              </span>
                             </article>
                           ))
                         ) : (
@@ -1339,6 +1511,7 @@ export default function App() {
                         <thead>
                           <tr>
                             <th>Metric</th>
+                            <th>State</th>
                             <th>Base</th>
                             <th>Candidate</th>
                             <th>Abs Delta</th>
@@ -1347,23 +1520,31 @@ export default function App() {
                         </thead>
                         <tbody>
                           {sortedMetricDiffs.length > 0 ? (
-                            sortedMetricDiffs.map((diff) => (
-                            <tr key={`${diff.group_name}:${diff.key}`}>
+                            sortedMetricDiffs.map((diff) => {
+                              const semantic = classifyMetricDiffSemantic(diff, semanticFlagKeys.has(diff.key));
+                              return (
+                            <tr key={`${diff.group_name}:${diff.key}`} className={`metric-diff-row semantic-${semantic}`}>
                               <td>
                                 <div className="metric-name-cell">
                                   <strong>{compactMetricLabel(diff.key)}</strong>
                                   <span>{formatOptionalText(diff.group_name)}</span>
                                 </div>
                               </td>
+                              <td>
+                                <span className={`semantic-badge ${semantic}`}>
+                                  {formatCompareSemantic(semantic)}
+                                </span>
+                              </td>
                               <td>{formatDiffMetric(diff.left_num, diff.left_text, diff.unit)}</td>
                               <td>{formatDiffMetric(diff.right_num, diff.right_text, diff.unit)}</td>
                               <td>{formatNumericDelta(diff.abs_delta, diff.unit)}</td>
                               <td>{formatPercentDelta(diff.pct_delta)}</td>
                             </tr>
-                            ))
+                              );
+                            })
                           ) : (
                             <tr>
-                              <td colSpan={5} className="quiet">
+                              <td colSpan={6} className="quiet">
                                 No metric diffs matched the current compare filters.
                               </td>
                             </tr>
@@ -1783,6 +1964,130 @@ function sortMetricDiffs(
       }
       return Math.abs(right.abs_delta ?? 0) - Math.abs(left.abs_delta ?? 0);
     });
+}
+
+function classifyMetricDiffSemantic(
+  diff: CompareReport["metric_diffs"][number],
+  hasTriggeredRegression: boolean,
+): CompareSemantic {
+  if (hasTriggeredRegression) {
+    return "regressed";
+  }
+
+  const hasNumeric = diff.left_num != null && diff.right_num != null;
+  const hasTextChange = diff.left_text !== diff.right_text;
+  const hasMissingSide =
+    (diff.left_num == null && diff.left_text == null) || (diff.right_num == null && diff.right_text == null);
+
+  if (hasMissingSide) {
+    return hasMeaningfulMetricChange(diff) ? "unresolved" : "stable";
+  }
+
+  if (hasNumeric) {
+    const delta = (diff.right_num ?? 0) - (diff.left_num ?? 0);
+    if (delta === 0) {
+      return "stable";
+    }
+    if (diff.direction === "higher_is_better") {
+      return delta > 0 ? "improved" : "regressed";
+    }
+    if (diff.direction === "lower_is_better") {
+      return delta < 0 ? "improved" : "regressed";
+    }
+    if (diff.direction === "none") {
+      return "changed";
+    }
+    return "unresolved";
+  }
+
+  if (hasTextChange) {
+    return "changed";
+  }
+
+  return "stable";
+}
+
+function hasMeaningfulMetricChange(diff: CompareReport["metric_diffs"][number]): boolean {
+  return (
+    diff.abs_delta != null ||
+    diff.pct_delta != null ||
+    diff.left_text !== diff.right_text ||
+    diff.left_num !== diff.right_num
+  );
+}
+
+function formatCompareSemantic(semantic: CompareSemantic): string {
+  if (semantic === "improved") {
+    return "Improved";
+  }
+  if (semantic === "regressed") {
+    return "Regressed";
+  }
+  if (semantic === "changed") {
+    return "Changed";
+  }
+  if (semantic === "unresolved") {
+    return "Unresolved";
+  }
+  return "Stable";
+}
+
+function deriveCompareSemanticFromReport(
+  report: CompareReport,
+  baseItem: RunListItem,
+  candidateItem: RunListItem,
+): CompareSemantic {
+  const triggeredKeys = new Set(
+    report.regression_flags.filter((flag) => flag.status === "triggered").map((flag) => flag.metric_key),
+  );
+  if (triggeredKeys.size > 0) {
+    return "regressed";
+  }
+  if (baseItem.exec_status !== candidateItem.exec_status) {
+    return "changed";
+  }
+  if (baseItem.warning_count !== candidateItem.warning_count) {
+    return "changed";
+  }
+
+  const highlightedSemantics = selectCompareHighlights(report, baseItem.primary_metrics).map((diff) =>
+    classifyMetricDiffSemantic(diff, triggeredKeys.has(diff.key)),
+  );
+  if (highlightedSemantics.includes("regressed")) {
+    return "regressed";
+  }
+  if (highlightedSemantics.includes("improved")) {
+    return "improved";
+  }
+  if (highlightedSemantics.includes("changed")) {
+    return "changed";
+  }
+  if (highlightedSemantics.includes("unresolved")) {
+    return "unresolved";
+  }
+  if (report.metric_diffs.some((diff) => hasMeaningfulMetricChange(diff))) {
+    return "changed";
+  }
+  return "stable";
+}
+
+function semanticSortRank(semantic: CompareSemantic | undefined): number {
+  if (semantic === "regressed") {
+    return 5;
+  }
+  if (semantic === "unresolved") {
+    return 4;
+  }
+  if (semantic === "changed") {
+    return 3;
+  }
+  if (semantic === "improved") {
+    return 2;
+  }
+  if (semantic === "stable") {
+    return 1;
+  }
+  return 0;
 }
 
 function sortRunsForCompactMode(

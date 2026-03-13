@@ -280,6 +280,30 @@ pre {
   margin-bottom: 12px;
 }
 
+.compare-semantic-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(78, 192, 141, 0.16);
+  border-radius: 16px;
+  background: rgba(78, 192, 141, 0.05);
+}
+
+.compare-semantic-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.compare-semantic-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .compact-sort-controls {
   display: flex;
   flex-wrap: wrap;
@@ -523,6 +547,22 @@ pre {
 .signal-pill.regression {
   color: #ffd9d4;
   background: rgba(224, 109, 93, 0.16);
+}
+
+.signal-pill.semantic.improved {
+  color: #c9f4e0;
+  background: rgba(78, 192, 141, 0.16);
+}
+
+.signal-pill.semantic.regressed {
+  color: #ffd9d4;
+  background: rgba(224, 109, 93, 0.16);
+}
+
+.signal-pill.semantic.changed,
+.signal-pill.semantic.unresolved {
+  color: #f4deba;
+  background: rgba(217, 161, 74, 0.16);
 }
 
 .run-card-title {
@@ -976,12 +1016,58 @@ pre {
   font-size: 0.88rem;
 }
 
+.semantic-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.71rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.semantic-badge.improved {
+  color: #c9f4e0;
+  background: rgba(78, 192, 141, 0.16);
+}
+
+.semantic-badge.regressed {
+  color: #ffd9d4;
+  background: rgba(224, 109, 93, 0.18);
+}
+
+.semantic-badge.changed,
+.semantic-badge.unresolved {
+  color: #f4deba;
+  background: rgba(217, 161, 74, 0.18);
+}
+
+.semantic-badge.stable {
+  color: #d7e6f3;
+  background: rgba(151, 175, 194, 0.14);
+}
+
 .warning-shared {
   margin-top: 12px;
 }
 
 .metric-diff-toolbar {
   margin-bottom: 12px;
+}
+
+.metric-diff-row.semantic-regressed td:first-child {
+  box-shadow: inset 2px 0 0 rgba(224, 109, 93, 0.65);
+}
+
+.metric-diff-row.semantic-improved td:first-child {
+  box-shadow: inset 2px 0 0 rgba(78, 192, 141, 0.65);
+}
+
+.metric-diff-row.semantic-changed td:first-child,
+.metric-diff-row.semantic-unresolved td:first-child {
+  box-shadow: inset 2px 0 0 rgba(217, 161, 74, 0.6);
 }
 
 .metric-diff-filters {
@@ -996,6 +1082,22 @@ pre {
   border: 1px solid var(--border);
   border-radius: 16px;
   background: rgba(8, 14, 21, 0.42);
+}
+
+.overview-card.semantic-improved {
+  border-color: rgba(78, 192, 141, 0.24);
+  background: rgba(78, 192, 141, 0.07);
+}
+
+.overview-card.semantic-regressed {
+  border-color: rgba(224, 109, 93, 0.28);
+  background: rgba(224, 109, 93, 0.08);
+}
+
+.overview-card.semantic-changed,
+.overview-card.semantic-unresolved {
+  border-color: rgba(233, 180, 76, 0.24);
+  background: rgba(233, 180, 76, 0.07);
 }
 
 .overview-card.changed {
