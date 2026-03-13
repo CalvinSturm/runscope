@@ -1,4 +1,4 @@
-use crate::domain::{AdapterWarning, ExecStatus, MetricRecord, RunManifestV1};
+use crate::domain::{AdapterWarning, BaselineBinding, ExecStatus, MetricRecord, RunManifestV1};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -80,4 +80,5 @@ pub struct RunDetail {
     pub warnings: Vec<WarningRecord>,
     pub notes: Vec<NoteRecord>,
     pub tags: Vec<String>,
+    pub active_baselines: Vec<BaselineBinding>,
 }

@@ -135,4 +135,103 @@ export interface RunDetail {
   warnings: WarningRecord[];
   notes: NoteRecord[];
   tags: string[];
+  active_baselines: BaselineBinding[];
+}
+
+export interface ComparisonScope {
+  branch: string | null;
+  suite: string | null;
+  scenario: string | null;
+  backend: string | null;
+  model: string | null;
+  precision: string | null;
+  dataset: string | null;
+}
+
+export interface BaselineBinding {
+  id: number;
+  project_slug: string;
+  label: string;
+  scope: ComparisonScope;
+  scope_hash: string;
+  run_id: string;
+  active: boolean;
+  created_at: string;
+}
+
+export interface SetBaselineRequest {
+  run_id: string;
+  label: string;
+}
+
+export interface FieldDiff {
+  field: string;
+  left: string | null;
+  right: string | null;
+}
+
+export interface MetricDiff {
+  key: string;
+  group_name: string;
+  left_num: number | null;
+  right_num: number | null;
+  left_text: string | null;
+  right_text: string | null;
+  unit: string | null;
+  direction: MetricDirection;
+  abs_delta: number | null;
+  pct_delta: number | null;
+}
+
+export interface ArtifactDiff {
+  role: string;
+  left_rel_path: string | null;
+  right_rel_path: string | null;
+}
+
+export interface CompareReport {
+  left_run_id: string;
+  right_run_id: string;
+  metadata_diffs: FieldDiff[];
+  metric_diffs: MetricDiff[];
+  artifact_diffs: ArtifactDiff[];
+  regression_flags: RegressionFlag[];
+}
+
+export type RegressionComparator =
+  | "pct_drop_gt"
+  | "pct_increase_gt"
+  | "abs_delta_gt"
+  | "abs_delta_lt";
+
+export interface RegressionRule {
+  id: number;
+  project_slug: string;
+  label: string;
+  scope: ComparisonScope;
+  scope_hash: string;
+  metric_key: string;
+  comparator: RegressionComparator;
+  threshold_value: number;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface CreateRegressionRuleRequest {
+  run_id: string;
+  label: string;
+  metric_key: string;
+  comparator: RegressionComparator;
+  threshold_value: number;
+}
+
+export interface RegressionFlag {
+  metric_key: string;
+  comparator: RegressionComparator;
+  threshold_value: number;
+  baseline_run_id: string;
+  candidate_run_id: string;
+  actual_value: number | null;
+  status: string;
+  label: string;
 }

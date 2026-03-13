@@ -7,8 +7,8 @@
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc --noEmit -p tsconfig.app.json && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 1421",
-    "desktop:dev": "tauri dev --config ../apps/desktop/src-tauri/tauri.conf.json",
-    "desktop:build": "tauri build --config ../apps/desktop/src-tauri/tauri.conf.json"
+    "desktop:dev": "cd .. && npx --prefix ui tauri dev --config apps/desktop/src-tauri/tauri.conf.json",
+    "desktop:build": "cd .. && npx --prefix ui tauri build --config apps/desktop/src-tauri/tauri.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0",

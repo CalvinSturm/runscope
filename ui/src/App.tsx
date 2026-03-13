@@ -1,7 +1,38 @@
 import { startTransition, useDeferredValue, useEffect, useState, type ReactNode } from "react";
-import { getRun, listRuns } from "./lib/api";
-import { formatDateTime, formatDuration, formatMetric } from "./lib/format";
-import type { ExecStatus, RunDetail, RunListFilter, RunListItem } from "./lib/types";
+import {
+  compareRuns,
+  createRegressionRule,
+  getRun,
+  listBaselines,
+  listRegressionRules,
+  listRuns,
+  openPath,
+  revealPath,
+  setActiveBaseline,
+} from "./lib/api";
+import {
+  EMPTY_TOKEN,
+  compactMetricLabel,
+  formatDateTime,
+  formatDuration,
+  formatMetric,
+  formatNumericDelta,
+  formatOptionalText,
+  formatPercentDelta,
+  formatRelativeAge,
+} from "./lib/format";
+import type {
+  BaselineBinding,
+  CreateRegressionRuleRequest,
+  CompareReport,
+  ExecStatus,
+  MetricRecord,
+  RegressionComparator,
+  RegressionRule,
+  RunDetail,
+  RunListFilter,
+  RunListItem,
+} from "./lib/types";
 
 type FilterState = {
   queryText: string;
@@ -27,10 +58,29 @@ export default function App() {
   const [items, setItems] = useState<RunListItem[]>([]);
   const [total, setTotal] = useState(0);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [compareTargetId, setCompareTargetId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
+  const [compareReport, setCompareReport] = useState<CompareReport | null>(null);
+  const [projectBaselines, setProjectBaselines] = useState<BaselineBinding[]>([]);
+  const [regressionRules, setRegressionRules] = useState<RegressionRule[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [loadingCompare, setLoadingCompare] = useState(false);
+  const [savingBaseline, setSavingBaseline] = useState(false);
+  const [savingRule, setSavingRule] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ruleDraft, setRuleDraft] = useState<{
+    metricKey: string;
+    comparator: RegressionComparator;
+    thresholdValue: string;
+  }>({
+    metricKey: "",
+    comparator: "pct_drop_gt",
+    thresholdValue: "5",
+  });
+  const [compactList, setCompactList] = useState(false);
+  const [showAllPrimaryMetrics, setShowAllPrimaryMetrics] = useState(false);
+  const [pathNotice, setPathNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,8 +88,13 @@ export default function App() {
       setLoadingList(true);
       setError(null);
       try {
+        const normalizedQuery = deferredQueryText.trim().toLowerCase();
+        const specialQuery =
+          normalizedQuery === "has:metrics" || normalizedQuery === "has:baseline"
+            ? normalizedQuery
+            : null;
         const filter: RunListFilter = {
-          query_text: deferredQueryText || undefined,
+          query_text: specialQuery ? undefined : deferredQueryText || undefined,
           project: filters.project || undefined,
           exec_status: filters.execStatus || undefined,
           backend: filters.backend || undefined,
@@ -52,14 +107,33 @@ export default function App() {
         if (cancelled) {
           return;
         }
-        setItems(page.items);
-        setTotal(page.total);
+        const filteredItems = page.items.filter((item) => {
+          if (specialQuery === "has:metrics") {
+            return item.primary_metrics.length > 0;
+          }
+          if (specialQuery === "has:baseline") {
+            return activeBaselineRunIds.has(item.run_id);
+          }
+          return true;
+        });
+        setItems(filteredItems);
+        setTotal(filteredItems.length);
         startTransition(() => {
           setSelectedRunId((current) => {
-            if (current && page.items.some((item) => item.run_id === current)) {
+            if (current && filteredItems.some((item) => item.run_id === current)) {
               return current;
             }
-            return page.items[0]?.run_id ?? null;
+            return filteredItems[0]?.run_id ?? null;
+          });
+          setCompareTargetId((current) => {
+            if (
+              current &&
+              current !== selectedRunId &&
+              filteredItems.some((item) => item.run_id === current)
+            ) {
+              return current;
+            }
+            return null;
           });
         });
       } catch (caught) {
@@ -68,6 +142,7 @@ export default function App() {
           setItems([]);
           setTotal(0);
           setSelectedRunId(null);
+          setCompareTargetId(null);
         }
       } finally {
         if (!cancelled) {
@@ -86,6 +161,8 @@ export default function App() {
     filters.model,
     filters.precision,
     filters.project,
+    projectBaselines,
+    selectedRunId,
   ]);
 
   useEffect(() => {
@@ -118,25 +195,309 @@ export default function App() {
     };
   }, [selectedRunId]);
 
+  useEffect(() => {
+    if (!selectedRunId || !compareTargetId || selectedRunId === compareTargetId) {
+      setCompareReport(null);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      setLoadingCompare(true);
+      try {
+        const nextReport = await compareRuns(selectedRunId, compareTargetId);
+        if (!cancelled) {
+          setCompareReport(nextReport);
+        }
+      } catch (caught) {
+        if (!cancelled) {
+          setError(String(caught));
+          setCompareReport(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingCompare(false);
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [compareTargetId, selectedRunId]);
+
+  useEffect(() => {
+    if (!detail) {
+      setProjectBaselines([]);
+      setRegressionRules([]);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const baselines = await listBaselines(detail.manifest.project.slug);
+        if (!cancelled) {
+          setProjectBaselines(baselines);
+        }
+        const rules = await listRegressionRules(detail.manifest.project.slug);
+        if (!cancelled) {
+          setRegressionRules(rules);
+        }
+      } catch (caught) {
+        if (!cancelled) {
+          setError(String(caught));
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.manifest.project.slug]);
+
+  useEffect(() => {
+    if (!detail) {
+      return;
+    }
+    setShowAllPrimaryMetrics(false);
+    const defaultMetric =
+      detail.manifest.metrics.find((metric) => metric.is_primary)?.key ??
+      detail.manifest.metrics[0]?.key ??
+      "";
+    setRuleDraft((current) => ({
+      ...current,
+      metricKey: current.metricKey || defaultMetric,
+    }));
+  }, [detail]);
+
   const selectedSummary = items.find((item) => item.run_id === selectedRunId) ?? null;
+  const compareSummary = items.find((item) => item.run_id === compareTargetId) ?? null;
   const primaryMetrics = detail?.manifest.metrics.filter((metric) => metric.is_primary) ?? [];
+  const matchingBaselineForCompare =
+    compareSummary && detail
+      ? detail.active_baselines.find((baseline) => baseline.run_id === compareSummary.run_id)
+      : null;
+
+  const latestStartedAt = items.reduce<string | null>((latest, item) => {
+    if (!item.started_at) {
+      return latest;
+    }
+    if (!latest) {
+      return item.started_at;
+    }
+    return new Date(item.started_at).getTime() > new Date(latest).getTime() ? item.started_at : latest;
+  }, null);
+
+  const passCount = items.filter((item) => item.exec_status === "pass").length;
+  const failCount = items.filter(
+    (item) => item.exec_status === "fail" || item.exec_status === "error",
+  ).length;
+  const unknownCount = items.filter((item) => item.exec_status === "unknown").length;
+  const adapterCounts = items.reduce<Record<string, number>>((accumulator, item) => {
+    accumulator[item.adapter] = (accumulator[item.adapter] ?? 0) + 1;
+    return accumulator;
+  }, {});
+  const adapterSummary = Object.entries(adapterCounts)
+    .sort((left, right) => right[1] - left[1])
+    .map(([adapter, count]) => `${adapter} ${count}`)
+    .join(" · ");
+  const projectBaselineCount = new Set(projectBaselines.map((baseline) => baseline.run_id)).size;
+  const baselineCoverageText = detail
+    ? `${detail.active_baselines.length} matching · ${projectBaselineCount} active in project`
+    : EMPTY_TOKEN;
+
+  const selectedTitle =
+    detail?.manifest.identity.label ??
+    detail?.manifest.identity.scenario ??
+    detail?.manifest.run_id ??
+    EMPTY_TOKEN;
+  const selectedContext = [
+    detail?.manifest.project.display_name,
+    detail?.manifest.identity.suite,
+    detail?.manifest.identity.scenario,
+  ]
+    .filter((value): value is string => Boolean(value && value.trim().length > 0))
+    .join(" · ");
+  const selectedKicker = [
+    detail?.manifest.project.slug ? `project ${detail.manifest.project.slug}` : null,
+    selectedSummary?.started_at ? formatRelativeAge(selectedSummary.started_at) : null,
+    detail?.manifest.runtime.duration_ms != null
+      ? formatDuration(detail.manifest.runtime.duration_ms)
+      : null,
+  ]
+    .filter((value): value is string => Boolean(value && value !== EMPTY_TOKEN))
+    .join(" · ");
+  const hasPrimaryMetricsCount = items.filter((item) => item.primary_metrics.length > 0).length;
+  const activeBaselineRunIds = new Set(projectBaselines.map((baseline) => baseline.run_id));
+  const baselineRunCount = items.filter((item) => activeBaselineRunIds.has(item.run_id)).length;
+  const curatedPrimaryMetrics = selectCuratedMetrics(primaryMetrics);
+  const visiblePrimaryMetrics = showAllPrimaryMetrics
+    ? primaryMetrics
+    : curatedPrimaryMetrics.slice(0, 8);
+  const hiddenPrimaryMetricCount = Math.max(0, primaryMetrics.length - visiblePrimaryMetrics.length);
+  const compareMode = Boolean(compareTargetId);
+  const filterChips = [
+    {
+      label: "LocalAgent",
+      active: filters.project === "localagent",
+      onClick: () =>
+        setFilters((current) => ({
+          ...current,
+          project: current.project === "localagent" ? "" : "localagent",
+        })),
+    },
+    {
+      label: "VideoForge",
+      active: filters.project === "videoforge",
+      onClick: () =>
+        setFilters((current) => ({
+          ...current,
+          project: current.project === "videoforge" ? "" : "videoforge",
+        })),
+    },
+    {
+      label: "Has metrics",
+      active: filters.queryText === "has:metrics",
+      onClick: () =>
+        setFilters((current) => ({
+          ...current,
+          queryText: current.queryText === "has:metrics" ? "" : "has:metrics",
+        })),
+    },
+    {
+      label: "Has baseline",
+      active: filters.queryText === "has:baseline",
+      onClick: () =>
+        setFilters((current) => ({
+          ...current,
+          queryText: current.queryText === "has:baseline" ? "" : "has:baseline",
+        })),
+    },
+    {
+      label: "Failed",
+      active: filters.execStatus === "fail" || filters.execStatus === "error",
+      onClick: () =>
+        setFilters((current) => ({
+          ...current,
+          execStatus: current.execStatus === "fail" ? "" : "fail",
+        })),
+    },
+  ];
+
+  async function refreshSelectedRun(runId: string) {
+    const nextDetail = await getRun(runId);
+    setDetail(nextDetail);
+  }
+
+  async function handleSetBaseline() {
+    if (!detail) {
+      return;
+    }
+    setSavingBaseline(true);
+    setError(null);
+    try {
+      await setActiveBaseline({ run_id: detail.manifest.run_id, label: "default" });
+      await refreshSelectedRun(detail.manifest.run_id);
+      const baselines = await listBaselines(detail.manifest.project.slug);
+      setProjectBaselines(baselines);
+    } catch (caught) {
+      setError(String(caught));
+    } finally {
+      setSavingBaseline(false);
+    }
+  }
+
+  async function handleCreateRule() {
+    if (!detail) {
+      return;
+    }
+    const thresholdValue = Number(ruleDraft.thresholdValue);
+    if (!ruleDraft.metricKey || Number.isNaN(thresholdValue)) {
+      setError("Regression rule requires a metric key and numeric threshold.");
+      return;
+    }
+    setSavingRule(true);
+    setError(null);
+    try {
+      const request: CreateRegressionRuleRequest = {
+        run_id: detail.manifest.run_id,
+        label: "default",
+        metric_key: ruleDraft.metricKey,
+        comparator: ruleDraft.comparator,
+        threshold_value: thresholdValue,
+      };
+      await createRegressionRule(request);
+      const rules = await listRegressionRules(detail.manifest.project.slug);
+      setRegressionRules(rules);
+      if (compareTargetId) {
+        const nextReport = await compareRuns(detail.manifest.run_id, compareTargetId);
+        setCompareReport(nextReport);
+      }
+    } catch (caught) {
+      setError(String(caught));
+    } finally {
+      setSavingRule(false);
+    }
+  }
+
+  async function handleOpenPath(path: string, reveal = false) {
+    try {
+      if (reveal) {
+        await revealPath(path);
+      } else {
+        await openPath(path);
+      }
+    } catch (caught) {
+      setError(String(caught));
+    }
+  }
+
+  async function handleCopyPath(path: string) {
+    try {
+      await navigator.clipboard.writeText(path);
+      setPathNotice("Path copied");
+      window.setTimeout(() => setPathNotice(null), 1800);
+    } catch (caught) {
+      setError(String(caught));
+    }
+  }
 
   return (
     <main className="app-shell">
       <section className="hero">
-        <div>
+        <div className="hero-copy">
           <p className="eyebrow">RunScope Dashboard</p>
-          <h1>Local run history for engineering work you actually need to inspect.</h1>
+          <h1>Local run history tuned for inspection, comparison, and baseline work.</h1>
+          <p className="hero-subcopy">
+            Keep the list dense, keep the selected run legible, and surface the metrics that
+            actually matter first.
+          </p>
         </div>
         <div className="hero-stats">
-          <div>
-            <span>Total visible runs</span>
-            <strong>{total}</strong>
-          </div>
-          <div>
-            <span>Selected adapter</span>
-            <strong>{selectedSummary?.adapter ?? "n/a"}</strong>
-          </div>
+          <SummaryCard label="Visible runs" value={String(total)} detail="Current filter window" />
+          <SummaryCard
+            label="Latest activity"
+            value={formatRelativeAge(latestStartedAt)}
+            detail={formatDateTime(latestStartedAt)}
+          />
+          <SummaryCard
+            label="Status split"
+            value={`${passCount} pass`}
+            detail={`${failCount} fail/error · ${unknownCount} unknown`}
+          />
+          <SummaryCard
+            label="Adapters"
+            value={Object.keys(adapterCounts).length > 0 ? adapterSummary : EMPTY_TOKEN}
+            detail={
+              selectedSummary ? `selected ${selectedSummary.adapter}` : "Select a run to inspect"
+            }
+          />
+          <SummaryCard
+            label="Baseline coverage"
+            value={baselineCoverageText}
+            detail={detail ? "Selected run scope and project baselines" : "No run selected"}
+          />
         </div>
       </section>
 
@@ -191,6 +552,22 @@ export default function App() {
         />
       </section>
 
+      <section className="filter-chip-row">
+        {filterChips.map((chip) => (
+          <button
+            key={chip.label}
+            className={`filter-chip ${chip.active ? "active" : ""}`}
+            onClick={chip.onClick}
+            type="button"
+          >
+            {chip.label}
+          </button>
+        ))}
+        <span className="quiet filter-chip-summary">
+          {hasPrimaryMetricsCount} runs with primary metrics · {baselineRunCount} active baselines in current project view
+        </span>
+      </section>
+
       {error ? <div className="banner banner-error">{error}</div> : null}
 
       <section className="workspace">
@@ -200,8 +577,38 @@ export default function App() {
               <p className="section-label">Runs</p>
               <h2>Latest local history</h2>
             </div>
-            {loadingList ? <span className="quiet">Refreshing...</span> : null}
+            <div className="runs-toolbar">
+              {loadingList ? <span className="quiet">Refreshing...</span> : null}
+              <button
+                className={`utility-button ${compactList ? "active" : ""}`}
+                onClick={() => setCompactList((current) => !current)}
+                type="button"
+              >
+                {compactList ? "Comfortable List" : "Compact List"}
+              </button>
+            </div>
           </div>
+          <section className={`compare-mode-banner ${compareMode ? "active" : ""}`}>
+            <div>
+              <span className="section-label">Compare Mode</span>
+              <strong>
+                {compareMode
+                  ? `${selectedSummary?.label ?? selectedSummary?.run_id ?? EMPTY_TOKEN} vs ${compareSummary?.label ?? compareSummary?.run_id ?? EMPTY_TOKEN}`
+                  : "Choose a candidate from the list to compare against the selected base run."}
+              </strong>
+            </div>
+            <div className="compare-mode-actions">
+              {compareMode ? (
+                <button
+                  className="utility-button"
+                  onClick={() => setCompareTargetId(null)}
+                  type="button"
+                >
+                  Clear Compare
+                </button>
+              ) : null}
+            </div>
+          </section>
           <div className="runs-list">
             {items.length === 0 && !loadingList ? (
               <div className="empty-state">
@@ -209,65 +616,114 @@ export default function App() {
                 <p>Ingest a LocalAgent or VideoForge artifact directory to populate the dashboard.</p>
               </div>
             ) : null}
-            {items.map((item) => (
-              <button
-                key={item.run_id}
-                className={`run-card ${selectedRunId === item.run_id ? "selected" : ""}`}
-                onClick={() => setSelectedRunId(item.run_id)}
-                type="button"
-              >
-                <div className="run-card-topline">
-                  <span className={`status-pill ${item.exec_status}`}>{item.exec_status}</span>
-                  <span className="adapter-pill">{item.adapter}</span>
-                  <span className="timestamp">{formatDateTime(item.started_at)}</span>
-                </div>
-                <div className="run-card-title">
-                  <strong>{item.project_slug}</strong>
-                  <span>{item.label ?? item.scenario ?? item.run_id}</span>
-                </div>
-                <div className="run-card-identity">
-                  <span>{item.suite ?? "no suite"}</span>
-                  <span>{item.scenario ?? "no scenario"}</span>
-                </div>
-                <div className="run-card-meta">
-                  <span>{item.backend ?? "backend n/a"}</span>
-                  <span>{item.model ?? "model n/a"}</span>
-                  <span>{item.precision ?? "precision n/a"}</span>
-                  <span>{formatDuration(item.duration_ms)}</span>
-                </div>
-                <div className="metric-row">
-                  {item.primary_metrics.length > 0 ? (
-                    item.primary_metrics.map((metric) => (
-                      <div key={`${metric.group_name}:${metric.key}`} className="metric-chip">
-                        <span>{metric.key}</span>
-                        <strong>{formatMetric(metric)}</strong>
-                      </div>
-                    ))
-                  ) : (
-                    <span className="quiet">No primary metrics</span>
-                  )}
-                </div>
-                {item.tags.length > 0 ? (
-                  <div className="tag-row">
-                    {item.tags.map((tag) => (
-                      <span key={tag} className="tag-pill">
-                        {tag}
-                      </span>
-                    ))}
+            {items.map((item) => {
+              const isSelected = selectedRunId === item.run_id;
+              const isCompareTarget = compareTargetId === item.run_id;
+              const visibleMetrics = item.primary_metrics.slice(0, 3);
+              const hiddenMetricCount = Math.max(0, item.primary_metrics.length - visibleMetrics.length);
+              const runTitle = item.label ?? item.scenario ?? item.run_id;
+              return (
+                <button
+                  key={item.run_id}
+                  className={`run-card status-${item.exec_status} ${compactList ? "compact" : ""} ${isSelected ? "selected" : ""} ${isCompareTarget ? "compare-target" : ""}`}
+                  onClick={() => setSelectedRunId(item.run_id)}
+                  type="button"
+                >
+                  <div className="run-card-topline">
+                    <span className={`status-pill ${item.exec_status}`}>{item.exec_status}</span>
+                    <span className="adapter-pill">{item.adapter}</span>
+                    <span className="timestamp">{formatRelativeAge(item.started_at)}</span>
                   </div>
-                ) : null}
-              </button>
-            ))}
+                  <div className="run-card-title">
+                    <strong>{runTitle}</strong>
+                    <span>{item.project_slug}</span>
+                  </div>
+                  {!compactList ? (
+                    <div className="run-card-identity">
+                      <span>{formatOptionalText(item.suite)}</span>
+                      <span>{formatOptionalText(item.scenario)}</span>
+                    </div>
+                  ) : null}
+                  <div className="run-card-meta">
+                    <span>{formatOptionalText(item.backend)}</span>
+                    <span>{formatOptionalText(item.model)}</span>
+                    <span>{formatOptionalText(item.precision)}</span>
+                    <span>{formatDuration(item.duration_ms)}</span>
+                  </div>
+                  {!compactList ? (
+                    <div className="metric-row">
+                      {visibleMetrics.length > 0 ? (
+                        <>
+                          {visibleMetrics.map((metric) => (
+                            <div key={`${metric.group_name}:${metric.key}`} className="metric-chip">
+                              <span>{compactMetricLabel(metric.key)}</span>
+                              <strong>{formatMetric(metric)}</strong>
+                            </div>
+                          ))}
+                          {hiddenMetricCount > 0 ? (
+                            <div className="metric-chip more">
+                              <span>More metrics</span>
+                              <strong>+{hiddenMetricCount}</strong>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <span className="quiet">No primary metrics</span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="compact-summary-row">
+                      <span>
+                        {visibleMetrics[0]
+                          ? `${compactMetricLabel(visibleMetrics[0].key)} ${formatMetric(visibleMetrics[0])}`
+                          : "No primary metrics"}
+                      </span>
+                      {hiddenMetricCount > 0 ? <span>+{hiddenMetricCount} more</span> : null}
+                    </div>
+                  )}
+                  {!compactList && item.tags.length > 0 ? (
+                    <div className="tag-row">
+                      {item.tags.map((tag) => (
+                        <span key={tag} className="tag-pill">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="card-actions">
+                    <span className="quiet">
+                      {isSelected ? "Base run" : isCompareTarget ? "Candidate run" : "Click to inspect"}
+                    </span>
+                    <div className="card-action-buttons">
+                      {!isSelected ? (
+                        <button
+                          className={`compare-button ${isCompareTarget ? "active" : ""}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setCompareTargetId((current) => (current === item.run_id ? null : item.run_id));
+                          }}
+                          type="button"
+                        >
+                          {isCompareTarget ? "Selected Candidate" : "Use As Candidate"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 
         <div className="detail-panel">
           <div className="section-heading">
             <div>
-              <p className="section-label">Detail</p>
-              <h2>Run inspection</h2>
+              <p className="section-label">Inspection</p>
+              <h2>{compareTargetId ? "Compare and inspect" : "Run inspection"}</h2>
             </div>
-            {loadingDetail ? <span className="quiet">Loading...</span> : null}
+            {loadingDetail || loadingCompare ? (
+              <span className="quiet">{loadingCompare ? "Comparing..." : "Loading..."}</span>
+            ) : null}
           </div>
 
           {!detail ? (
@@ -278,24 +734,194 @@ export default function App() {
           ) : (
             <div className="detail-scroll">
               <section className="detail-hero">
-                <div>
+                <div className="detail-copy">
                   <div className="detail-title-row">
                     <span className={`status-pill ${detail.manifest.runtime.exec_status}`}>
                       {detail.manifest.runtime.exec_status}
                     </span>
                     <span className="adapter-pill">{detail.manifest.source.adapter}</span>
+                    {compareSummary ? <span className="compare-badge">vs {compareSummary.run_id}</span> : null}
                   </div>
-                  <h3>{detail.manifest.identity.label ?? detail.manifest.run_id}</h3>
-                  <p>
-                    {detail.manifest.project.display_name} · {detail.manifest.identity.suite ?? "no suite"} ·{" "}
-                    {detail.manifest.identity.scenario ?? "no scenario"}
-                  </p>
+                  <h3>{selectedTitle}</h3>
+                  <p>{selectedContext || EMPTY_TOKEN}</p>
+                  <div className="detail-kicker-row">
+                    <span>{selectedKicker || EMPTY_TOKEN}</span>
+                  </div>
                 </div>
                 <div className="detail-root">
+                  <div className="detail-actions">
+                    <button className="baseline-button" onClick={handleSetBaseline} type="button">
+                      {savingBaseline ? "Saving Baseline..." : "Set Active Baseline"}
+                    </button>
+                    <button
+                      className="utility-button"
+                      onClick={() => handleOpenPath(detail.run_root)}
+                      type="button"
+                    >
+                      Open Folder
+                    </button>
+                    <button
+                      className="utility-button"
+                      onClick={() => handleCopyPath(detail.run_root)}
+                      type="button"
+                    >
+                      Copy Path
+                    </button>
+                    <button
+                      className="utility-button"
+                      onClick={() => handleOpenPath(joinPath(detail.run_root, "run.json"))}
+                      type="button"
+                    >
+                      Open run.json
+                    </button>
+                    <button
+                      className="utility-button"
+                      onClick={() => handleOpenPath(joinPath(detail.run_root, "run.json"), true)}
+                      type="button"
+                    >
+                      Reveal run.json
+                    </button>
+                  </div>
                   <span>Run root</span>
                   <code>{detail.run_root}</code>
+                  {pathNotice ? <small className="quiet">{pathNotice}</small> : null}
                 </div>
               </section>
+
+              {compareSummary ? (
+                <Panel
+                  title="Compare Context"
+                  subtitle="The selected run is the base on the left. The compare target is rendered as the right-hand candidate."
+                >
+                  <div className="compare-summary">
+                    <CompareRunCard title="Base" item={selectedSummary} />
+                    <CompareRunCard title="Candidate" item={compareSummary} />
+                  </div>
+                  {matchingBaselineForCompare ? (
+                    <div className="baseline-inline-note">
+                      Candidate matches active baseline label <strong>{matchingBaselineForCompare.label}</strong> for this scope.
+                    </div>
+                  ) : null}
+                </Panel>
+              ) : null}
+
+              {compareSummary && compareReport ? (
+                <>
+                  <Panel
+                    title="Regression Flags"
+                    subtitle="Candidate run evaluated against the active baseline for the same scope using stored regression rules."
+                  >
+                    {compareReport.regression_flags.length > 0 ? (
+                      <div className="flag-list">
+                        {compareReport.regression_flags.map((flag) => (
+                          <article className={`flag-item ${flag.status}`} key={`${flag.label}:${flag.metric_key}:${flag.comparator}`}>
+                            <div className="flag-topline">
+                              <strong>{flag.metric_key}</strong>
+                              <span className={`flag-status ${flag.status}`}>{flag.status}</span>
+                            </div>
+                            <span>
+                              {flag.comparator} threshold {flag.threshold_value}
+                            </span>
+                            <span>
+                              actual {flag.actual_value != null ? flag.actual_value.toFixed(2) : EMPTY_TOKEN} · baseline {flag.baseline_run_id}
+                            </span>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="quiet">No regression rules matched the candidate baseline scope yet.</span>
+                    )}
+                  </Panel>
+
+                  <Panel title="Metadata Diffs" subtitle="Core-owned metadata comparisons across the normalized manifest.">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Field</th>
+                          <th>Base</th>
+                          <th>Candidate</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {compareReport.metadata_diffs.length > 0 ? (
+                          compareReport.metadata_diffs.map((diff) => (
+                            <tr key={diff.field}>
+                              <td>{diff.field}</td>
+                              <td>{formatOptionalText(diff.left)}</td>
+                              <td>{formatOptionalText(diff.right)}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={3} className="quiet">
+                              No metadata differences across the tracked compare fields.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </Panel>
+
+                  <Panel title="Metric Diffs" subtitle="Absolute and percent deltas are computed in core when both values are numeric.">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Metric</th>
+                          <th>Base</th>
+                          <th>Candidate</th>
+                          <th>Abs Delta</th>
+                          <th>Percent Delta</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {compareReport.metric_diffs.map((diff) => (
+                          <tr key={`${diff.group_name}:${diff.key}`}>
+                            <td>
+                              <div className="metric-name-cell">
+                                <strong>{compactMetricLabel(diff.key)}</strong>
+                                <span>{formatOptionalText(diff.group_name)}</span>
+                              </div>
+                            </td>
+                            <td>{formatDiffMetric(diff.left_num, diff.left_text, diff.unit)}</td>
+                            <td>{formatDiffMetric(diff.right_num, diff.right_text, diff.unit)}</td>
+                            <td>{formatNumericDelta(diff.abs_delta, diff.unit)}</td>
+                            <td>{formatPercentDelta(diff.pct_delta)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </Panel>
+
+                  <Panel title="Artifact Diffs" subtitle="Artifact presence and managed relative path changes between the two runs.">
+                    <table className="data-table">
+                      <thead>
+                        <tr>
+                          <th>Role</th>
+                          <th>Base Path</th>
+                          <th>Candidate Path</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {compareReport.artifact_diffs.length > 0 ? (
+                          compareReport.artifact_diffs.map((diff) => (
+                            <tr key={diff.role}>
+                              <td>{diff.role}</td>
+                              <td>{formatOptionalText(diff.left_rel_path ?? "missing")}</td>
+                              <td>{formatOptionalText(diff.right_rel_path ?? "missing")}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={3} className="quiet">
+                              No artifact path differences across matched roles.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </Panel>
+                </>
+              ) : null}
 
               <section className="detail-grid">
                 <InfoCard title="Identity">
@@ -334,12 +960,19 @@ export default function App() {
                 </InfoCard>
               </section>
 
-              <Panel title="Key Metrics" subtitle="Primary metrics shown in the list for comparison readiness.">
+              <Panel
+                title="Key Metrics"
+                subtitle={
+                  hiddenPrimaryMetricCount > 0
+                    ? "Curated top metrics first, with the remainder available on demand."
+                    : "Primary metrics shown in the list for comparison readiness."
+                }
+              >
                 <div className="metric-grid">
-                  {primaryMetrics.length > 0 ? (
-                    primaryMetrics.map((metric) => (
+                  {visiblePrimaryMetrics.length > 0 ? (
+                    visiblePrimaryMetrics.map((metric) => (
                       <div className="metric-tile" key={`${metric.group_name}:${metric.key}`}>
-                        <span>{metric.key}</span>
+                        <span>{compactMetricLabel(metric.key)}</span>
                         <strong>{formatMetric(metric)}</strong>
                         <small>{metric.direction.replace(/_/g, " ")}</small>
                       </div>
@@ -348,6 +981,19 @@ export default function App() {
                     <div className="quiet">No primary metrics were marked for this run.</div>
                   )}
                 </div>
+                {hiddenPrimaryMetricCount > 0 ? (
+                  <div className="panel-actions">
+                    <button
+                      className="utility-button"
+                      onClick={() => setShowAllPrimaryMetrics((current) => !current)}
+                      type="button"
+                    >
+                      {showAllPrimaryMetrics
+                        ? "Show Curated Set"
+                        : `Show Remaining ${hiddenPrimaryMetricCount}`}
+                    </button>
+                  </div>
+                ) : null}
               </Panel>
 
               <Panel title="All Metrics" subtitle="Normalized metric records from the canonical manifest.">
@@ -365,10 +1011,10 @@ export default function App() {
                     {detail.manifest.metrics.map((metric) => (
                       <tr key={`${metric.group_name}:${metric.key}`}>
                         <td>{metric.key}</td>
-                        <td>{metric.group_name || "default"}</td>
+                        <td>{formatOptionalText(metric.group_name)}</td>
                         <td>{formatMetric(metric)}</td>
                         <td>{metric.direction.replace(/_/g, " ")}</td>
-                        <td>{metric.is_primary ? "yes" : "no"}</td>
+                        <td>{metric.is_primary ? "yes" : EMPTY_TOKEN}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -383,6 +1029,7 @@ export default function App() {
                       <th>Relative path</th>
                       <th>Media type</th>
                       <th>Size</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -392,8 +1039,33 @@ export default function App() {
                         <td>
                           <code>{artifact.rel_path}</code>
                         </td>
-                        <td>{artifact.media_type}</td>
-                        <td>{artifact.size_bytes != null ? `${artifact.size_bytes} B` : "n/a"}</td>
+                        <td>{formatOptionalText(artifact.media_type)}</td>
+                        <td>{artifact.size_bytes != null ? `${artifact.size_bytes} B` : EMPTY_TOKEN}</td>
+                        <td>
+                          <div className="table-actions">
+                            <button
+                              className="utility-button inline"
+                              onClick={() => handleOpenPath(joinPath(detail.run_root, artifact.rel_path))}
+                              type="button"
+                            >
+                              Open
+                            </button>
+                            <button
+                              className="utility-button inline"
+                              onClick={() => handleOpenPath(joinPath(detail.run_root, artifact.rel_path), true)}
+                              type="button"
+                            >
+                              Reveal
+                            </button>
+                            <button
+                              className="utility-button inline"
+                              onClick={() => handleCopyPath(joinPath(detail.run_root, artifact.rel_path))}
+                              type="button"
+                            >
+                              Copy
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -401,6 +1073,108 @@ export default function App() {
               </Panel>
 
               <div className="detail-grid secondary">
+                <Panel title="Baselines" subtitle="Active scoped baselines matching this run and the wider project.">
+                  {detail.active_baselines.length > 0 ? (
+                    <div className="baseline-list">
+                      {detail.active_baselines.map((baseline) => (
+                        <article className="baseline-item" key={baseline.id}>
+                          <strong>{baseline.label}</strong>
+                          <span>Run {baseline.run_id}</span>
+                          <span>
+                            Branch {formatOptionalText(baseline.scope.branch)} · Backend{" "}
+                            {formatOptionalText(baseline.scope.backend)}
+                          </span>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="quiet">No active baseline currently matches this run scope.</span>
+                  )}
+                  {projectBaselines.length > 0 ? (
+                    <div className="baseline-list project">
+                      {projectBaselines.map((baseline) => (
+                        <article className="baseline-item" key={`project-${baseline.id}`}>
+                          <strong>{baseline.label}</strong>
+                          <span>{baseline.run_id}</span>
+                          <span>
+                            {formatOptionalText(baseline.scope.suite)} · {formatOptionalText(baseline.scope.scenario)} ·{" "}
+                            {formatOptionalText(baseline.scope.backend)}
+                          </span>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                </Panel>
+                <Panel title="Regression Rules" subtitle="Scope-aware rules evaluated when a candidate run has an active baseline for this scope.">
+                  <div className="rule-form">
+                    <label>
+                      Metric
+                      <select
+                        value={ruleDraft.metricKey}
+                        onChange={(event) =>
+                          setRuleDraft((current) => ({ ...current, metricKey: event.target.value }))
+                        }
+                      >
+                        {detail.manifest.metrics.map((metric) => (
+                          <option key={metric.key} value={metric.key}>
+                            {metric.key}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Comparator
+                      <select
+                        value={ruleDraft.comparator}
+                        onChange={(event) =>
+                          setRuleDraft((current) => ({
+                            ...current,
+                            comparator: event.target.value as RegressionComparator,
+                          }))
+                        }
+                      >
+                        <option value="pct_drop_gt">pct_drop_gt</option>
+                        <option value="pct_increase_gt">pct_increase_gt</option>
+                        <option value="abs_delta_gt">abs_delta_gt</option>
+                        <option value="abs_delta_lt">abs_delta_lt</option>
+                      </select>
+                    </label>
+                    <label>
+                      Threshold
+                      <input
+                        value={ruleDraft.thresholdValue}
+                        onChange={(event) =>
+                          setRuleDraft((current) => ({
+                            ...current,
+                            thresholdValue: event.target.value,
+                          }))
+                        }
+                        placeholder="5"
+                      />
+                    </label>
+                    <button className="baseline-button" onClick={handleCreateRule} type="button">
+                      {savingRule ? "Saving Rule..." : "Add Rule For This Scope"}
+                    </button>
+                  </div>
+                  {regressionRules.length > 0 ? (
+                    <div className="baseline-list project">
+                      {regressionRules.map((rule) => (
+                        <article className="baseline-item" key={`rule-${rule.id}`}>
+                          <strong>{rule.metric_key}</strong>
+                          <span>
+                            {rule.comparator} · threshold {rule.threshold_value}
+                          </span>
+                          <span>
+                            {formatOptionalText(rule.scope.suite)} · {formatOptionalText(rule.scope.scenario)} ·{" "}
+                            {formatOptionalText(rule.scope.backend)}
+                          </span>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="quiet">No regression rules defined for this project yet.</span>
+                  )}
+                </Panel>
                 <Panel title="Tags" subtitle="Operator labels kept separate from execution status.">
                   <div className="tag-row">
                     {detail.tags.length > 0 ? (
@@ -446,6 +1220,49 @@ export default function App() {
   );
 }
 
+function formatDiffMetric(valueNum: number | null, valueText: string | null, unit: string | null): string {
+  if (valueNum != null) {
+    const metric: MetricRecord = {
+      key: "",
+      group_name: "",
+      value_num: valueNum,
+      value_text: null,
+      unit,
+      direction: "none",
+      is_primary: false,
+    };
+    return formatMetric(metric);
+  }
+  return formatOptionalText(valueText);
+}
+
+function selectCuratedMetrics(metrics: MetricRecord[]): MetricRecord[] {
+  return [...metrics].sort((left, right) => {
+    const leftIsGeneric = left.key.includes("by_model") ? 1 : 0;
+    const rightIsGeneric = right.key.includes("by_model") ? 1 : 0;
+    if (leftIsGeneric !== rightIsGeneric) {
+      return leftIsGeneric - rightIsGeneric;
+    }
+    return left.key.length - right.key.length;
+  });
+}
+
+function joinPath(base: string, relPath: string): string {
+  const normalizedBase = base.replace(/[\\/]+$/, "");
+  const normalizedRel = relPath.replace(/[\\/]+/g, "\\");
+  return `${normalizedBase}\\${normalizedRel}`;
+}
+
+function SummaryCard(props: { label: string; value: string; detail: string }) {
+  return (
+    <div className="summary-card">
+      <span>{props.label}</span>
+      <strong>{props.value}</strong>
+      <small>{props.detail}</small>
+    </div>
+  );
+}
+
 function FilterField(props: {
   label: string;
   value: string;
@@ -486,10 +1303,33 @@ function InfoCard(props: { title: string; children: ReactNode }) {
 }
 
 function InfoRow(props: { label: string; value: string | null | undefined }) {
+  const formattedValue = formatOptionalText(props.value);
   return (
-    <div className="info-row">
+    <div className={`info-row ${formattedValue === EMPTY_TOKEN ? "is-empty" : ""}`}>
       <span>{props.label}</span>
-      <strong>{props.value && props.value.length > 0 ? props.value : "n/a"}</strong>
+      <strong className={formattedValue === EMPTY_TOKEN ? "empty-token" : undefined}>
+        {formattedValue}
+      </strong>
     </div>
+  );
+}
+
+function CompareRunCard(props: { title: string; item: RunListItem | null }) {
+  return (
+    <article className="compare-run-card">
+      <span className="section-label">{props.title}</span>
+      {props.item ? (
+        <>
+          <strong>{props.item.label ?? props.item.run_id}</strong>
+          <span>{props.item.project_slug}</span>
+          <span>
+            {formatOptionalText(props.item.backend)} · {formatOptionalText(props.item.model)} ·{" "}
+            {formatOptionalText(props.item.precision)}
+          </span>
+        </>
+      ) : (
+        <span className="quiet">No run selected</span>
+      )}
+    </article>
   );
 }

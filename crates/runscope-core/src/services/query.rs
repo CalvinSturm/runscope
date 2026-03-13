@@ -2,8 +2,8 @@ use super::ingest::AppPaths;
 use crate::db::connection::open_connection;
 use crate::db::migrations::apply_migrations;
 use crate::domain::{
-    ExecStatus, MetricDirection, MetricRecord, NoteRecord, RunDetail, RunListFilter, RunListItem,
-    RunListPage, RunManifestV1, WarningRecord,
+    BaselineBinding, ComparisonScope, ExecStatus, MetricDirection, MetricRecord, NoteRecord,
+    RunDetail, RunListFilter, RunListItem, RunListPage, RunManifestV1, WarningRecord,
 };
 use crate::error::RunScopeError;
 use crate::store::managed_run_root;
@@ -58,6 +58,7 @@ impl QueryService {
 
         Ok(RunDetail {
             run_root: run_root.display().to_string(),
+            active_baselines: load_active_baselines_for_manifest(&conn, &manifest)?,
             manifest,
             warnings: load_warnings(&conn, run_id)?,
             notes: load_notes(&conn, run_id)?,
@@ -332,6 +333,54 @@ fn load_tags(conn: &Connection, run_id: &str) -> Result<Vec<String>, RunScopeErr
         tags.push(row?);
     }
     Ok(tags)
+}
+
+fn load_active_baselines_for_manifest(
+    conn: &Connection,
+    manifest: &RunManifestV1,
+) -> Result<Vec<BaselineBinding>, RunScopeError> {
+    let scope = ComparisonScope::from_manifest(manifest);
+    let scope_hash = scope.scope_hash()?;
+    let mut statement = conn.prepare(
+        "SELECT
+            baseline_bindings.id,
+            projects.slug,
+            baseline_bindings.label,
+            baseline_bindings.scope_json,
+            baseline_bindings.scope_hash,
+            baseline_bindings.run_id,
+            baseline_bindings.active,
+            baseline_bindings.created_at
+         FROM baseline_bindings
+         JOIN projects ON projects.id = baseline_bindings.project_id
+         WHERE projects.slug = ?1 AND baseline_bindings.scope_hash = ?2 AND baseline_bindings.active = 1
+         ORDER BY baseline_bindings.created_at DESC, baseline_bindings.id DESC",
+    )?;
+    let rows = statement.query_map(params![manifest.project.slug, scope_hash], |row| {
+        let scope_json: String = row.get(3)?;
+        Ok(BaselineBinding {
+            id: row.get(0)?,
+            project_slug: row.get(1)?,
+            label: row.get(2)?,
+            scope: serde_json::from_str(&scope_json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })?,
+            scope_hash: row.get(4)?,
+            run_id: row.get(5)?,
+            active: row.get::<_, i64>(6)? != 0,
+            created_at: row.get(7)?,
+        })
+    })?;
+
+    let mut baselines = Vec::new();
+    for row in rows {
+        baselines.push(row?);
+    }
+    Ok(baselines)
 }
 
 fn normalized_text(value: Option<&str>) -> Option<&str> {
