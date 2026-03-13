@@ -31,6 +31,7 @@ fn run() -> Result<()> {
 
     match cli.command {
         Commands::Ingest(command) => commands::ingest::run(command, &paths, cli.json),
+        Commands::Record(command) => commands::record::run(command, &paths, cli.json),
     }
 }
 

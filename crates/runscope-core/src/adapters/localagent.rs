@@ -334,43 +334,7 @@ fn parse_exec_status(value: Option<&str>) -> ExecStatus {
 
 fn parse_metrics(value: &Value, warnings: &mut Vec<AdapterWarning>) -> Vec<MetricRecord> {
     if let Some(metrics) = value.get("metrics").and_then(Value::as_array) {
-        let parsed: Vec<_> = metrics
-            .iter()
-            .filter_map(|metric| {
-                let object = metric.as_object()?;
-                Some(MetricRecord {
-                    key: object.get("key")?.as_str()?.to_string(),
-                    group_name: object
-                        .get("group_name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                    value_num: object.get("value_num").and_then(Value::as_f64),
-                    value_text: object
-                        .get("value_text")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string),
-                    unit: object
-                        .get("unit")
-                        .and_then(Value::as_str)
-                        .map(ToString::to_string),
-                    direction: match object
-                        .get("direction")
-                        .and_then(Value::as_str)
-                        .unwrap_or("none")
-                    {
-                        "higher_is_better" => MetricDirection::HigherIsBetter,
-                        "lower_is_better" => MetricDirection::LowerIsBetter,
-                        "target" => MetricDirection::Target,
-                        _ => MetricDirection::None,
-                    },
-                    is_primary: object
-                        .get("is_primary")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false),
-                })
-            })
-            .collect();
+        let parsed: Vec<_> = metrics.iter().filter_map(parse_metric_row).collect();
         if parsed.len() != metrics.len() {
             warnings.push(AdapterWarning {
                 code: "ignored_metric_rows".to_string(),
@@ -378,6 +342,52 @@ fn parse_metrics(value: &Value, warnings: &mut Vec<AdapterWarning>) -> Vec<Metri
                     .to_string(),
             });
         }
+        return parsed;
+    }
+
+    let mut parsed = Vec::new();
+    let mut parsed_any = false;
+
+    if let Some(rows) = value
+        .get("ux_summary_metric_rows")
+        .and_then(Value::as_array)
+    {
+        parsed_any = true;
+        append_metric_rows(&mut parsed, rows, None, warnings);
+    }
+    if let Some(by_model) = value
+        .get("ux_summary_metric_rows_by_model")
+        .and_then(Value::as_object)
+    {
+        parsed_any = true;
+        for (model, rows) in by_model {
+            if let Some(rows) = rows.as_array() {
+                append_metric_rows(
+                    &mut parsed,
+                    rows,
+                    Some(&format!("ux.by_model.{model}.")),
+                    warnings,
+                );
+            }
+        }
+    }
+    if let Some(by_task_family) = value
+        .get("ux_summary_metric_rows_by_task_family")
+        .and_then(Value::as_object)
+    {
+        parsed_any = true;
+        for (task_family, rows) in by_task_family {
+            if let Some(rows) = rows.as_array() {
+                append_metric_rows(
+                    &mut parsed,
+                    rows,
+                    Some(&format!("ux.by_task_family.{task_family}.")),
+                    warnings,
+                );
+            }
+        }
+    }
+    if parsed_any {
         return parsed;
     }
 
@@ -403,6 +413,66 @@ fn parse_metrics(value: &Value, warnings: &mut Vec<AdapterWarning>) -> Vec<Metri
         message: "LocalAgent artifact did not expose metrics in a recognized format.".to_string(),
     });
     Vec::new()
+}
+
+fn append_metric_rows(
+    out: &mut Vec<MetricRecord>,
+    rows: &[Value],
+    key_prefix: Option<&str>,
+    warnings: &mut Vec<AdapterWarning>,
+) {
+    let before = out.len();
+    out.extend(
+        rows.iter()
+            .filter_map(|row| parse_metric_row_with_prefix(row, key_prefix)),
+    );
+    if out.len().saturating_sub(before) != rows.len() {
+        warnings.push(AdapterWarning {
+            code: "ignored_metric_rows".to_string(),
+            message: "LocalAgent artifact included metric rows that could not be normalized."
+                .to_string(),
+        });
+    }
+}
+
+fn parse_metric_row(value: &Value) -> Option<MetricRecord> {
+    parse_metric_row_with_prefix(value, None)
+}
+
+fn parse_metric_row_with_prefix(value: &Value, key_prefix: Option<&str>) -> Option<MetricRecord> {
+    let object = value.as_object()?;
+    let key = object.get("key")?.as_str()?;
+    Some(MetricRecord {
+        key: format!("{}{}", key_prefix.unwrap_or_default(), key),
+        group_name: object
+            .get("group_name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        value_num: object.get("value_num").and_then(Value::as_f64),
+        value_text: object
+            .get("value_text")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        unit: object
+            .get("unit")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        direction: match object
+            .get("direction")
+            .and_then(Value::as_str)
+            .unwrap_or("none")
+        {
+            "higher_is_better" => MetricDirection::HigherIsBetter,
+            "lower_is_better" => MetricDirection::LowerIsBetter,
+            "target" => MetricDirection::Target,
+            _ => MetricDirection::None,
+        },
+        is_primary: object
+            .get("is_primary")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
 }
 
 fn adapter_payload(object: Option<&Map<String, Value>>) -> BTreeMap<String, Value> {
@@ -518,5 +588,56 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.code == "ignored_metric_rows"));
+    }
+
+    #[test]
+    fn parse_accepts_localagent_eval_ux_metric_exports() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("run.json"),
+            r#"{
+                "project":{"slug":"localagent","display_name":"LocalAgent"},
+                "suite":"eval",
+                "scenario":"common-coding-ux",
+                "status":"pass",
+                "workload":{"command_argv":["localagent","eval"]},
+                "ux_summary_metric_rows":[
+                    {"key":"ux.task_success_rate","group_name":"ux","value_num":0.5,"direction":"higher_is_better","is_primary":true},
+                    {"key":"ux.validation_completion_rate","group_name":"ux","value_num":0.25,"direction":"higher_is_better","is_primary":true}
+                ],
+                "ux_summary_metric_rows_by_model":{
+                    "qwen2.5-coder-7b-instruct@q8_0":[
+                        {"key":"ux.task_success_rate","group_name":"ux","value_num":0.75,"direction":"higher_is_better","is_primary":true}
+                    ]
+                },
+                "ux_summary_metric_rows_by_task_family":{
+                    "recovery":[
+                        {"key":"ux.task_success_rate","group_name":"ux","value_num":0.0,"direction":"higher_is_better","is_primary":true},
+                        {"key":"ux.failure_stage.validation.count","group_name":"ux","value_num":1.0,"direction":"none","is_primary":false}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let parsed = LocalAgentAdapter.parse(temp.path()).unwrap();
+
+        assert!(parsed
+            .manifest
+            .metrics
+            .iter()
+            .any(|metric| metric.key == "ux.task_success_rate" && metric.value_num == Some(0.5)));
+        assert!(parsed.manifest.metrics.iter().any(|metric| {
+            metric.key == "ux.by_model.qwen2.5-coder-7b-instruct@q8_0.ux.task_success_rate"
+                && metric.value_num == Some(0.75)
+        }));
+        assert!(parsed.manifest.metrics.iter().any(|metric| {
+            metric.key == "ux.by_task_family.recovery.ux.failure_stage.validation.count"
+                && metric.value_num == Some(1.0)
+        }));
+        assert!(!parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.code == "missing_metrics"));
     }
 }

@@ -43,6 +43,45 @@ pub fn insert_ingested_run(
     tags: &[String],
     note: Option<&str>,
 ) -> Result<(), RunScopeError> {
+    insert_run_manifest(
+        conn,
+        manifest,
+        warnings,
+        ingest_fingerprint,
+        Some(source_hash),
+        tags,
+        note,
+    )
+}
+
+pub fn insert_recorded_run(
+    conn: &mut Connection,
+    manifest: &RunManifestV1,
+    warnings: &[AdapterWarning],
+    ingest_fingerprint: &str,
+    tags: &[String],
+    note: Option<&str>,
+) -> Result<(), RunScopeError> {
+    insert_run_manifest(
+        conn,
+        manifest,
+        warnings,
+        ingest_fingerprint,
+        None,
+        tags,
+        note,
+    )
+}
+
+fn insert_run_manifest(
+    conn: &mut Connection,
+    manifest: &RunManifestV1,
+    warnings: &[AdapterWarning],
+    ingest_fingerprint: &str,
+    source_hash: Option<&str>,
+    tags: &[String],
+    note: Option<&str>,
+) -> Result<(), RunScopeError> {
     let tx = conn.transaction()?;
     let project_id = ensure_project(
         &tx,
@@ -100,7 +139,7 @@ fn insert_run_row(
     project_id: i64,
     manifest: &RunManifestV1,
     ingest_fingerprint: &str,
-    source_hash: &str,
+    source_hash: Option<&str>,
 ) -> Result<(), RunScopeError> {
     let command_json = manifest
         .workload

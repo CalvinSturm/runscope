@@ -1,8 +1,10 @@
 use runscope_core::db::connection::open_connection;
 use runscope_core::db::migrations::apply_migrations;
 use runscope_core::db::table_exists;
-use runscope_core::domain::RunManifestV1;
-use runscope_core::services::{AppPaths, IngestRequest, IngestService};
+use runscope_core::domain::{ExecStatus, MetricDirection, MetricRecord, RunManifestV1, SourceKind};
+use runscope_core::services::{
+    AppPaths, IngestRequest, IngestService, ManualAttachment, ManualRecordRequest, RecordService,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::tempdir;
@@ -94,6 +96,88 @@ fn ingest_localagent_sample_persists_expected_warning_count() {
     assert_eq!(manifest.summary.warning_count, 0);
 }
 
+#[test]
+fn ingest_videoforge_sample() {
+    let temp = tempdir().unwrap();
+    let paths = AppPaths {
+        db_path: temp.path().join("runscope.sqlite"),
+        data_dir: temp.path().join("data"),
+    };
+
+    let result =
+        IngestService::ingest_dir(&paths, ingest_request(videoforge_fixture_dir())).unwrap();
+    let artifact_root = PathBuf::from(result.artifact_root.unwrap());
+    let manifest: RunManifestV1 =
+        serde_json::from_str(&fs::read_to_string(artifact_root.join("run.json")).unwrap()).unwrap();
+
+    assert_eq!(manifest.project.slug, "videoforge");
+    assert_eq!(manifest.metrics.len(), 2);
+    assert!(artifact_root.join("logs/stdout.log").is_file());
+}
+
+#[test]
+fn ingest_faceapp_sample() {
+    let temp = tempdir().unwrap();
+    let paths = AppPaths {
+        db_path: temp.path().join("runscope.sqlite"),
+        data_dir: temp.path().join("data"),
+    };
+
+    let result = IngestService::ingest_dir(&paths, ingest_request(faceapp_fixture_dir())).unwrap();
+    let artifact_root = PathBuf::from(result.artifact_root.unwrap());
+    let manifest: RunManifestV1 =
+        serde_json::from_str(&fs::read_to_string(artifact_root.join("run.json")).unwrap()).unwrap();
+
+    assert_eq!(manifest.project.slug, "faceapp");
+    assert_eq!(manifest.metrics.len(), 2);
+    assert!(artifact_root.join("raw/faceapp_benchmark.json").is_file());
+}
+
+#[test]
+fn manual_record_creation() {
+    let temp = tempdir().unwrap();
+    let paths = AppPaths {
+        db_path: temp.path().join("runscope.sqlite"),
+        data_dir: temp.path().join("data"),
+    };
+
+    let result = RecordService::record_manual(&paths, manual_record_request(temp.path())).unwrap();
+    let artifact_root = PathBuf::from(result.artifact_root.unwrap());
+    let manifest: RunManifestV1 =
+        serde_json::from_str(&fs::read_to_string(artifact_root.join("run.json")).unwrap()).unwrap();
+
+    assert_eq!(manifest.project.slug, "manual-bench");
+    assert_eq!(manifest.source.source_kind, SourceKind::ManualRecord);
+    assert_eq!(manifest.runtime.exec_status, ExecStatus::Pass);
+    assert_eq!(manifest.metrics.len(), 1);
+}
+
+#[test]
+fn manual_record_attachment_ingest() {
+    let temp = tempdir().unwrap();
+    let paths = AppPaths {
+        db_path: temp.path().join("runscope.sqlite"),
+        data_dir: temp.path().join("data"),
+    };
+
+    let result = RecordService::record_manual(&paths, manual_record_request(temp.path())).unwrap();
+    let artifact_root = PathBuf::from(result.artifact_root.unwrap());
+    let manifest: RunManifestV1 =
+        serde_json::from_str(&fs::read_to_string(artifact_root.join("run.json")).unwrap()).unwrap();
+
+    assert!(manifest
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == "env_snapshot"
+            && artifact.rel_path.starts_with("attachments/")));
+    assert!(manifest
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.role == "stdout_log"
+            && artifact.rel_path.starts_with("attachments/")));
+    assert!(artifact_root.join("attachments").is_dir());
+}
+
 fn ingest_request(artifact_dir: PathBuf) -> IngestRequest {
     IngestRequest {
         artifact_dir,
@@ -112,6 +196,70 @@ fn fixture_dir() -> PathBuf {
         .join("fixtures")
         .join("localagent")
         .join("basic")
+}
+
+fn videoforge_fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("videoforge")
+        .join("basic")
+}
+
+fn faceapp_fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("faceapp")
+        .join("basic")
+}
+
+fn manual_record_request(root: &Path) -> ManualRecordRequest {
+    let attachment_path = root.join("stdout.log");
+    let env_path = root.join("env.redacted.json");
+    fs::write(&attachment_path, "manual stdout").unwrap();
+    fs::write(&env_path, "{\"TOKEN\":\"redacted\"}").unwrap();
+
+    ManualRecordRequest {
+        project_slug: "manual-bench".to_string(),
+        project_display_name: Some("Manual Bench".to_string()),
+        exec_status: ExecStatus::Pass,
+        suite: Some("smoke".to_string()),
+        scenario: Some("manual_case".to_string()),
+        label: Some("manual run".to_string()),
+        commit_sha: Some("abc123".to_string()),
+        branch: Some("main".to_string()),
+        git_dirty: Some(false),
+        machine_name: Some("DEVBOX".to_string()),
+        os: Some("Windows 11".to_string()),
+        cpu: Some("Ryzen".to_string()),
+        gpu: Some("RTX".to_string()),
+        backend: Some("cuda".to_string()),
+        model: Some("demo-model".to_string()),
+        precision: Some("fp16".to_string()),
+        dataset: Some("fixture".to_string()),
+        input_count: Some(2),
+        command_argv: vec!["runscope-demo".to_string(), "--flag".to_string()],
+        display_command: Some("runscope-demo --flag".to_string()),
+        cwd: Some("C:/work/demo".to_string()),
+        env_snapshot_file: Some(env_path),
+        metrics: vec![MetricRecord {
+            key: "fps".to_string(),
+            group_name: String::new(),
+            value_num: Some(42.0),
+            value_text: None,
+            unit: Some("frames/s".to_string()),
+            direction: MetricDirection::HigherIsBetter,
+            is_primary: true,
+        }],
+        attachments: vec![ManualAttachment {
+            role: "stdout_log".to_string(),
+            path: attachment_path,
+            media_type: "text/plain".to_string(),
+        }],
+        note: Some("manual note".to_string()),
+        tags: vec!["manual".to_string()],
+    }
 }
 
 fn copy_dir_all(src: &Path, dst: &Path) {

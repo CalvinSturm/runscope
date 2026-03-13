@@ -1,0 +1,39 @@
+{
+  "producer": "faceapp",
+  "benchmark_id": "fa-20260305-001",
+  "benchmark_name": "inference_benchmark",
+  "scenario": "resnet50_cuda_fp16",
+  "status": "pass",
+  "started_at": "2026-03-05T18:00:00Z",
+  "finished_at": "2026-03-05T18:00:12Z",
+  "duration_ms": 12000,
+  "git_commit": "face123456",
+  "branch": "main",
+  "backend": "cuda",
+  "model": "resnet50",
+  "precision": "fp16",
+  "dataset": "imagenet-mini",
+  "command": [
+    "faceapp-bench",
+    "--backend",
+    "cuda"
+  ],
+  "metrics": [
+    {
+      "key": "images_per_sec",
+      "group_name": "",
+      "value_num": 123.4,
+      "unit": "images/s",
+      "direction": "higher_is_better",
+      "is_primary": true
+    },
+    {
+      "key": "latency_p50_ms",
+      "group_name": "",
+      "value_num": 8.1,
+      "unit": "ms",
+      "direction": "lower_is_better",
+      "is_primary": true
+    }
+  ]
+}

@@ -187,10 +187,16 @@ fn detect_manifest_signature(path: &Path) -> Result<bool, RunScopeError> {
 }
 
 fn read_candidate_manifest(artifact_dir: &Path) -> Result<Value, RunScopeError> {
-    if let Some(report_path) = ["videoforge_run.json", "videoforge_report.json", "videoforge_manifest.json", "run.json", "report.json"]
-        .iter()
-        .map(|name| artifact_dir.join(name))
-        .find(|path| path.is_file())
+    if let Some(report_path) = [
+        "videoforge_run.json",
+        "videoforge_report.json",
+        "videoforge_manifest.json",
+        "run.json",
+        "report.json",
+    ]
+    .iter()
+    .map(|name| artifact_dir.join(name))
+    .find(|path| path.is_file())
     {
         return Ok(serde_json::from_str(&fs::read_to_string(report_path)?)?);
     }
@@ -199,7 +205,8 @@ fn read_candidate_manifest(artifact_dir: &Path) -> Result<Value, RunScopeError> 
     let runtime_snapshot_path = artifact_dir.join("videoforge.runtime_config_snapshot.v1.json");
     let observed_metrics_path = artifact_dir.join("videoforge.run_observed_metrics.v1.json");
 
-    if manifest_path.is_file() || runtime_snapshot_path.is_file() || observed_metrics_path.is_file() {
+    if manifest_path.is_file() || runtime_snapshot_path.is_file() || observed_metrics_path.is_file()
+    {
         return synthesize_manifest_from_v1_artifacts(
             manifest_path.is_file().then_some(manifest_path.as_path()),
             runtime_snapshot_path
@@ -224,7 +231,10 @@ fn synthesize_manifest_from_v1_artifacts(
     let observed_metrics = read_json_opt(observed_metrics_path)?;
 
     let mut report = Map::new();
-    report.insert("producer".to_string(), Value::String("videoforge".to_string()));
+    report.insert(
+        "producer".to_string(),
+        Value::String("videoforge".to_string()),
+    );
 
     if let Some(run_id) = json_string(&runtime_snapshot, &["run_id"])
         .or_else(|| json_string(&manifest_value, &["job_id"]))
@@ -261,7 +271,10 @@ fn synthesize_manifest_from_v1_artifacts(
         scenario_parts.push(format!("x{scale}"));
     }
     if !scenario_parts.is_empty() {
-        report.insert("scenario".to_string(), Value::String(scenario_parts.join("_")));
+        report.insert(
+            "scenario".to_string(),
+            Value::String(scenario_parts.join("_")),
+        );
     }
 
     if let Some(route_id) = route_id.clone() {
@@ -309,7 +322,10 @@ fn synthesize_manifest_from_v1_artifacts(
         report.insert("output_path".to_string(), Value::String(output_path));
     }
 
-    let mut command = vec![Value::String("videoforge".to_string()), Value::String("upscale".to_string())];
+    let mut command = vec![
+        Value::String("videoforge".to_string()),
+        Value::String("upscale".to_string()),
+    ];
     if let Some(engine_family) = json_string(&runtime_snapshot, &["engine_family"]) {
         if engine_family == "native" {
             command.push(Value::String("--native".to_string()));
@@ -331,10 +347,16 @@ fn synthesize_manifest_from_v1_artifacts(
 
     let mut metrics = Map::new();
     if let Some(total_elapsed_ms) = json_u64(&observed_metrics, &["total_elapsed_ms"]) {
-        metrics.insert("total_elapsed_ms".to_string(), Value::from(total_elapsed_ms as f64));
+        metrics.insert(
+            "total_elapsed_ms".to_string(),
+            Value::from(total_elapsed_ms as f64),
+        );
     }
     if let Some(work_units_processed) = json_u64(&observed_metrics, &["work_units_processed"]) {
-        metrics.insert("work_units_processed".to_string(), Value::from(work_units_processed as f64));
+        metrics.insert(
+            "work_units_processed".to_string(),
+            Value::from(work_units_processed as f64),
+        );
         if let Some(total_elapsed_ms) = json_u64(&observed_metrics, &["total_elapsed_ms"]) {
             if total_elapsed_ms > 0 {
                 let fps = work_units_processed as f64 / (total_elapsed_ms as f64 / 1000.0);
@@ -692,10 +714,7 @@ mod tests {
             parsed.manifest.identity.scenario.as_deref(),
             Some("native_direct_2x_SPAN_soft_fp16_x2")
         );
-        assert_eq!(
-            parsed.manifest.runtime.exec_status,
-            ExecStatus::Pass
-        );
+        assert_eq!(parsed.manifest.runtime.exec_status, ExecStatus::Pass);
         assert!(parsed
             .manifest
             .metrics

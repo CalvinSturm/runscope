@@ -8,7 +8,7 @@ use time::OffsetDateTime;
 
 pub const RUN_SCHEMA_VERSION: &str = "runscope.run.v1";
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecStatus {
     Pass,
@@ -17,7 +17,7 @@ pub enum ExecStatus {
     Unknown,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceKind {
     ArtifactDir,
@@ -25,7 +25,7 @@ pub enum SourceKind {
     ImportedManifest,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricDirection {
     HigherIsBetter,

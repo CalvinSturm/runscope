@@ -85,6 +85,25 @@ pub fn copied_artifacts_to_records(copied: Vec<CopiedArtifact>) -> Vec<ArtifactR
         .collect()
 }
 
+pub fn infer_media_type_from_path(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "json" => "application/json",
+        "html" | "htm" => "text/html",
+        "txt" | "log" | "md" => "text/plain",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "mp4" => "video/mp4",
+        "csv" => "text/csv",
+        _ => "application/octet-stream",
+    }
+}
+
 fn validate_target_rel_path(target_rel_path: &str) -> Result<(), RunScopeError> {
     let path = Path::new(target_rel_path);
     if path.is_absolute() {

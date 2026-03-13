@@ -1,0 +1,39 @@
+{
+  "producer": "videoforge",
+  "run_id": "vf-20260305-001",
+  "suite": "perf_smoke",
+  "scenario": "esrgan_x4_fp16",
+  "label": "main rtx4090 smoke",
+  "status": "pass",
+  "started_at": "2026-03-05T17:17:04Z",
+  "finished_at": "2026-03-05T17:18:11Z",
+  "duration_ms": 67000,
+  "exit_code": 0,
+  "git": {
+    "commit_sha": "abc123def456",
+    "branch": "main",
+    "dirty": false
+  },
+  "machine": "DESKTOP-01",
+  "os": "Windows 11",
+  "cpu": "Ryzen 9 7950X",
+  "gpu": "RTX 4090",
+  "backend": "tensorrt",
+  "model": "realesrgan-x4plus",
+  "precision": "fp16",
+  "dataset": "smoke_set_v1",
+  "input_count": 3,
+  "command": [
+    "videoforge",
+    "run",
+    "--backend",
+    "tensorrt"
+  ],
+  "cwd": "C:/work/videoforge",
+  "metrics": {
+    "fps": 42.1,
+    "latency_p50_ms": 18.4
+  },
+  "engine": "v2",
+  "pipeline": "nvdec_cuda_tensorrt_nvenc"
+}
