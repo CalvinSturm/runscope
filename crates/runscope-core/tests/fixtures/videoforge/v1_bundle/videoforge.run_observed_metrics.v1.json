@@ -1,0 +1,24 @@
+{
+  "schema_version": "videoforge.run_observed_metrics.v1",
+  "run_id": "vf-run-001",
+  "route_id": "native_direct",
+  "status": "succeeded",
+  "total_elapsed_ms": 2000,
+  "work_units_processed": 100,
+  "extensions": {
+    "native": {
+      "frames_decoded": 100,
+      "frames_preprocessed": 100,
+      "frames_inferred": 100,
+      "frames_encoded": 100,
+      "preprocess_avg_us": 1100,
+      "inference_frame_avg_us": 2200,
+      "inference_dispatch_avg_us": 2200,
+      "postprocess_frame_avg_us": 3300,
+      "postprocess_dispatch_avg_us": 3300,
+      "encode_avg_us": 4400,
+      "vram_current_mb": 512,
+      "vram_peak_mb": 1024
+    }
+  }
+}

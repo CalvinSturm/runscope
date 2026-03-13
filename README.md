@@ -44,7 +44,7 @@ Instead of hunting through directories and trying to remember which command, mod
   - `runscope record ...`
 - Support three adapters:
   - `LocalAgent` eval and replay artifacts
-  - `VideoForge` smoke and perf reports
+  - `VideoForge` smoke, perf, and `.videoforge_runs` artifact bundles
   - `faceapp` backend benchmark reports
 - Store metadata in SQLite
 - Preserve logs, JSON, screenshots, videos, and reports in a managed artifact store on disk

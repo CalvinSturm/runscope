@@ -1,0 +1,16 @@
+{
+  "schema_version": "videoforge.runtime_config_snapshot.v1",
+  "run_id": "vf-run-001",
+  "snapshot_kind": "resolved_runtime_config",
+  "route_id": "native_direct",
+  "engine_family": "native",
+  "input_path": "C:\\\\input\\\\clip.mp4",
+  "output_path": "C:\\\\output\\\\clip_x2.mp4",
+  "media_kind": "video",
+  "requested_executor": "direct",
+  "executed_executor": "direct",
+  "model_key": "2x_SPAN_soft",
+  "model_path": "C:\\\\weights\\\\2x_SPAN_soft.onnx",
+  "precision": "fp16",
+  "scale": 2
+}

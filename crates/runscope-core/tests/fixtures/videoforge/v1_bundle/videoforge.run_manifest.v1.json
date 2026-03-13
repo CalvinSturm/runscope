@@ -1,0 +1,8 @@
+{
+  "schema_version": "videoforge.run_manifest.v1",
+  "job_id": "vf-run-001",
+  "input_path": "C:\\\\input\\\\clip.mp4",
+  "output_path": "C:\\\\output\\\\clip_x2.mp4",
+  "scale": 2,
+  "model_key": "2x_SPAN_soft"
+}
