@@ -395,6 +395,9 @@ export default function App() {
     metricSortMode,
     { primaryOnly: primaryOnlyMetricDiffs, changedOnly: changedOnlyMetricDiffs },
   );
+  const candidatePrimaryMetric = compareSummary
+    ? compareSummary.primary_metrics.find((metric) => metric.key === compactMetricKey) ?? null
+    : null;
   const filterChips = [
     {
       label: "LocalAgent",
@@ -754,7 +757,7 @@ export default function App() {
                 >
                   <div className="run-card-topline">
                     <span className={`status-pill ${item.exec_status}`}>{item.exec_status}</span>
-                    <span className="adapter-pill">{item.adapter}</span>
+                    {!compactList ? <span className="adapter-pill">{item.adapter}</span> : null}
                     {isActiveBaseline ? <span className="signal-pill baseline">baseline</span> : null}
                     {isCompareTarget ? <span className="signal-pill candidate">candidate</span> : null}
                     {hasTriggeredRegression ? (
@@ -762,11 +765,11 @@ export default function App() {
                         {compareTriggeredFlags.length} regression
                       </span>
                     ) : null}
-                    <span className="timestamp">{formatRelativeAge(item.started_at)}</span>
+                    {!compactList ? <span className="timestamp">{formatRelativeAge(item.started_at)}</span> : null}
                   </div>
-                  <div className="run-card-title">
+                  <div className={`run-card-title ${compactList ? "compact" : ""}`}>
                     <strong>{runTitle}</strong>
-                    <span>{item.project_slug}</span>
+                    {!compactList ? <span>{item.project_slug}</span> : null}
                   </div>
                   {!compactList ? (
                     <div className="run-card-identity">
@@ -778,7 +781,9 @@ export default function App() {
                     <div className="compact-inline-meta">
                       <span>{formatOptionalText(item.backend)}</span>
                       <span>{formatOptionalText(item.model)}</span>
-                      <span className="active-triage-slot">
+                      <span
+                        className={`active-triage-slot ${isEmptyCompactTriageSignal(item, compactSortMode, compactMetricKey) ? "empty" : ""}`}
+                      >
                         {renderCompactTriageSignal(item, compactSortMode, compactMetricKey)}
                       </span>
                     </div>
@@ -834,19 +839,19 @@ export default function App() {
                   ) : null}
                   <div className="card-actions">
                     <span className="quiet compact-card-state">
-                      {isSelected ? "Base run" : isCompareTarget ? "Candidate run" : "Inspect"}
+                      {isSelected ? "Base" : isCompareTarget ? "Candidate" : EMPTY_TOKEN}
                     </span>
                     <div className="card-action-buttons">
                       {!isSelected ? (
                         <button
-                          className={`compare-button ${isCompareTarget ? "active" : ""}`}
+                          className={`compare-button ${compareMode ? "mode-active" : "mode-idle"} ${isCompareTarget ? "active" : ""}`}
                           onClick={(event) => {
                             event.stopPropagation();
                             setCompareTargetId((current) => (current === item.run_id ? null : item.run_id));
                           }}
                           type="button"
                         >
-                          {isCompareTarget ? "Selected Candidate" : "Use As Candidate"}
+                          {isCompareTarget ? "Candidate" : compareMode ? "Compare" : "Queue"}
                         </button>
                       ) : null}
                     </div>
@@ -855,6 +860,102 @@ export default function App() {
               );
             })}
           </div>
+          <section className={`runs-footer-card ${compareMode ? "compare-active" : ""}`}>
+            {compareMode ? (
+              <>
+                <div className="panel-heading compact">
+                  <h3>Compare Summary</h3>
+                  <p>Keep the left rail in compare mode so the workflow shift is obvious.</p>
+                </div>
+                <div className="footer-summary-grid">
+                  <article className="footer-summary-item">
+                    <span className="section-label">Base</span>
+                    <strong>{selectedSummary?.label ?? selectedSummary?.run_id ?? EMPTY_TOKEN}</strong>
+                    <small>{selectedSummary?.project_slug ?? EMPTY_TOKEN}</small>
+                  </article>
+                  <article className="footer-summary-item">
+                    <span className="section-label">Candidate</span>
+                    <strong>{compareSummary?.label ?? compareSummary?.run_id ?? EMPTY_TOKEN}</strong>
+                    <small>{compareSummary?.project_slug ?? EMPTY_TOKEN}</small>
+                  </article>
+                  <article className="footer-summary-item">
+                    <span className="section-label">Warnings</span>
+                    <strong>{formatDeltaText(warningDelta, "warning")}</strong>
+                    <small>
+                      {detail?.manifest.summary.warning_count ?? 0} → {candidateDetail?.manifest.summary.warning_count ?? EMPTY_TOKEN}
+                    </small>
+                  </article>
+                  <article className="footer-summary-item">
+                    <span className="section-label">Rank Signal</span>
+                    <strong>
+                      {compactSortMode === "primary_metric" && candidatePrimaryMetric
+                        ? formatMetric(candidatePrimaryMetric)
+                        : compactSortMode === "warnings"
+                          ? `${compareSummary?.warning_count ?? 0}`
+                          : compactSortMode === "duration"
+                            ? formatDuration(compareSummary?.duration_ms)
+                            : formatRelativeAge(compareSummary?.started_at)}
+                    </strong>
+                    <small>
+                      {compactSortMode === "primary_metric"
+                        ? compactMetricLabel(compactMetricKey)
+                        : compactSortMode.replace(/_/g, " ")}
+                    </small>
+                  </article>
+                  <article className="footer-summary-item compare-focus">
+                    <span className="section-label">Compare Focus</span>
+                    <strong>
+                      {compareTriggeredFlags.length > 0
+                        ? `${compareTriggeredFlags.length} triggered flag${compareTriggeredFlags.length === 1 ? "" : "s"}`
+                        : compareStatusChanged
+                          ? "Status changed"
+                          : "No triggered regressions"}
+                    </strong>
+                    <small>
+                      {compareTriggeredFlags.length > 0
+                        ? "Candidate needs review against the active baseline"
+                        : compareStatusChanged
+                          ? "Candidate execution differs from the base run"
+                          : "Use metric and warning deltas to confirm stability"}
+                    </small>
+                  </article>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="panel-heading compact">
+                  <h3>Triage Legend</h3>
+                  <p>Compact mode stays decision-first when the signal slot mirrors the active sort.</p>
+                </div>
+                <div className="footer-summary-grid">
+                  <article className="footer-summary-item">
+                    <span className="section-label">Sort Mode</span>
+                    <strong>{compactSortMode.replace(/_/g, " ")}</strong>
+                    <small>
+                      {compactSortMode === "primary_metric"
+                        ? compactMetricLabel(compactMetricKey)
+                        : "Active triage slot mirrors this ordering"}
+                    </small>
+                  </article>
+                  <article className="footer-summary-item">
+                    <span className="section-label">Baselines</span>
+                    <strong>{baselineRunCount}</strong>
+                    <small>Active baseline runs in this filtered view</small>
+                  </article>
+                  <article className="footer-summary-item">
+                    <span className="section-label">Metric Coverage</span>
+                    <strong>{hasPrimaryMetricsCount}</strong>
+                    <small>Runs with primary metrics available for triage</small>
+                  </article>
+                  <article className="footer-summary-item">
+                    <span className="section-label">Candidate Flow</span>
+                    <strong>{compareMode ? "active" : "ready"}</strong>
+                    <small>Pick any non-base row to begin compare mode</small>
+                  </article>
+                </div>
+              </>
+            )}
+          </section>
         </div>
 
         <div className="detail-panel">
@@ -1275,29 +1376,35 @@ export default function App() {
                 ) : null}
               </Panel>
 
-              <Panel title="All Metrics" subtitle="Normalized metric records from the canonical manifest.">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Key</th>
-                      <th>Group</th>
-                      <th>Value</th>
-                      <th>Direction</th>
-                      <th>Primary</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detail.manifest.metrics.map((metric) => (
-                      <tr key={`${metric.group_name}:${metric.key}`}>
-                        <td>{metric.key}</td>
-                        <td>{formatOptionalText(metric.group_name)}</td>
-                        <td>{formatMetric(metric)}</td>
-                        <td>{metric.direction.replace(/_/g, " ")}</td>
-                        <td>{metric.is_primary ? "yes" : EMPTY_TOKEN}</td>
+              <Panel
+                title="All Metrics"
+                subtitle="Reference-grade normalized metric records from the canonical manifest."
+                className="subtle-panel"
+              >
+                <div className="table-scroll-shell metrics-table-shell">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Key</th>
+                        <th>Group</th>
+                        <th>Value</th>
+                        <th>Direction</th>
+                        <th>Primary</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {detail.manifest.metrics.map((metric) => (
+                        <tr key={`${metric.group_name}:${metric.key}`}>
+                          <td>{metric.key}</td>
+                          <td>{formatOptionalText(metric.group_name)}</td>
+                          <td>{formatMetric(metric)}</td>
+                          <td>{metric.direction.replace(/_/g, " ")}</td>
+                          <td>{metric.is_primary ? "yes" : EMPTY_TOKEN}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </Panel>
 
               <Panel title="Artifacts" subtitle="Managed relative paths preserved under the local run root.">
@@ -1658,6 +1765,23 @@ function renderCompactTriageSignal(
   );
 }
 
+function isEmptyCompactTriageSignal(
+  item: RunListItem,
+  sortMode: CompactSortMode,
+  metricKey: string,
+) {
+  if (sortMode === "warnings") {
+    return item.warning_count === 0;
+  }
+  if (sortMode === "duration") {
+    return item.duration_ms == null;
+  }
+  if (sortMode === "primary_metric") {
+    return !item.primary_metrics.some((entry) => entry.key === metricKey && entry.value_num != null);
+  }
+  return !item.started_at;
+}
+
 function categorizeWarnings(baseWarnings: RunDetail["warnings"], candidateWarnings: RunDetail["warnings"]) {
   const baseMap = new Map(baseWarnings.map((warning) => [warningIdentity(warning), warning]));
   const candidateMap = new Map(
@@ -1770,9 +1894,9 @@ function FilterField(props: {
   );
 }
 
-function Panel(props: { title: string; subtitle: string; children: ReactNode }) {
+function Panel(props: { title: string; subtitle: string; children: ReactNode; className?: string }) {
   return (
-    <section className="panel">
+    <section className={`panel ${props.className ?? ""}`.trim()}>
       <div className="panel-heading">
         <h3>{props.title}</h3>
         <p>{props.subtitle}</p>
