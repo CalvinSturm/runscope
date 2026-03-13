@@ -372,7 +372,8 @@ pre {
 
 .status-pill,
 .adapter-pill,
-.tag-pill {
+.tag-pill,
+.signal-pill {
   display: inline-flex;
   align-items: center;
   padding: 5px 10px;
@@ -406,6 +407,21 @@ pre {
 .tag-pill {
   color: #d7e6f3;
   background: rgba(151, 175, 194, 0.15);
+}
+
+.signal-pill.baseline {
+  color: #f7e4bb;
+  background: rgba(233, 180, 76, 0.16);
+}
+
+.signal-pill.candidate {
+  color: #cdf3e0;
+  background: rgba(78, 192, 141, 0.16);
+}
+
+.signal-pill.regression {
+  color: #ffd9d4;
+  background: rgba(224, 109, 93, 0.16);
 }
 
 .run-card-title {
@@ -619,6 +635,48 @@ pre {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+
+.compare-primary {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.compare-overview-grid,
+.compare-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.compare-highlight-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.overview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(8, 14, 21, 0.42);
+}
+
+.overview-card.changed {
+  border-color: rgba(233, 180, 76, 0.24);
+  background: rgba(233, 180, 76, 0.07);
+}
+
+.overview-card.alert {
+  border-color: rgba(224, 109, 93, 0.28);
+  background: rgba(224, 109, 93, 0.08);
+}
+
+.overview-card strong,
+.compare-run-card strong {
+  line-height: 1.25;
 }
 
 .compare-run-card {
@@ -871,6 +929,8 @@ pre {
   .filters-panel,
   .detail-grid,
   .compare-summary,
+  .compare-overview-grid,
+  .compare-highlight-grid,
   .rule-form {
     grid-template-columns: 1fr;
   }

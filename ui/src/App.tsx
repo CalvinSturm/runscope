@@ -60,6 +60,7 @@ export default function App() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [compareTargetId, setCompareTargetId] = useState<string | null>(null);
   const [detail, setDetail] = useState<RunDetail | null>(null);
+  const [candidateDetail, setCandidateDetail] = useState<RunDetail | null>(null);
   const [compareReport, setCompareReport] = useState<CompareReport | null>(null);
   const [projectBaselines, setProjectBaselines] = useState<BaselineBinding[]>([]);
   const [regressionRules, setRegressionRules] = useState<RegressionRule[]>([]);
@@ -196,6 +197,32 @@ export default function App() {
   }, [selectedRunId]);
 
   useEffect(() => {
+    if (!compareTargetId || compareTargetId === selectedRunId) {
+      setCandidateDetail(null);
+      return;
+    }
+
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const nextDetail = await getRun(compareTargetId);
+        if (!cancelled) {
+          setCandidateDetail(nextDetail);
+        }
+      } catch (caught) {
+        if (!cancelled) {
+          setError(String(caught));
+          setCandidateDetail(null);
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [compareTargetId, selectedRunId]);
+
+  useEffect(() => {
     if (!selectedRunId || !compareTargetId || selectedRunId === compareTargetId) {
       setCompareReport(null);
       return;
@@ -278,6 +305,7 @@ export default function App() {
     compareSummary && detail
       ? detail.active_baselines.find((baseline) => baseline.run_id === compareSummary.run_id)
       : null;
+  const activeBaselineRunIds = new Set(projectBaselines.map((baseline) => baseline.run_id));
 
   const latestStartedAt = items.reduce<string | null>((latest, item) => {
     if (!item.started_at) {
@@ -329,7 +357,6 @@ export default function App() {
     .filter((value): value is string => Boolean(value && value !== EMPTY_TOKEN))
     .join(" · ");
   const hasPrimaryMetricsCount = items.filter((item) => item.primary_metrics.length > 0).length;
-  const activeBaselineRunIds = new Set(projectBaselines.map((baseline) => baseline.run_id));
   const baselineRunCount = items.filter((item) => activeBaselineRunIds.has(item.run_id)).length;
   const curatedPrimaryMetrics = selectCuratedMetrics(primaryMetrics);
   const visiblePrimaryMetrics = showAllPrimaryMetrics
@@ -337,6 +364,21 @@ export default function App() {
     : curatedPrimaryMetrics.slice(0, 8);
   const hiddenPrimaryMetricCount = Math.max(0, primaryMetrics.length - visiblePrimaryMetrics.length);
   const compareMode = Boolean(compareTargetId);
+  const compareTriggeredFlags =
+    compareReport?.regression_flags.filter((flag) => flag.status === "triggered") ?? [];
+  const compareHighlights = selectCompareHighlights(compareReport, primaryMetrics);
+  const compareStatusChanged =
+    detail && candidateDetail
+      ? detail.manifest.runtime.exec_status !== candidateDetail.manifest.runtime.exec_status
+      : false;
+  const warningDelta =
+    detail && candidateDetail
+      ? candidateDetail.manifest.summary.warning_count - detail.manifest.summary.warning_count
+      : null;
+  const artifactDelta =
+    detail && candidateDetail
+      ? candidateDetail.manifest.artifacts.length - detail.manifest.artifacts.length
+      : null;
   const filterChips = [
     {
       label: "LocalAgent",
@@ -619,6 +661,9 @@ export default function App() {
             {items.map((item) => {
               const isSelected = selectedRunId === item.run_id;
               const isCompareTarget = compareTargetId === item.run_id;
+              const isActiveBaseline = activeBaselineRunIds.has(item.run_id);
+              const hasTriggeredRegression =
+                isCompareTarget && compareTriggeredFlags.length > 0;
               const visibleMetrics = item.primary_metrics.slice(0, 3);
               const hiddenMetricCount = Math.max(0, item.primary_metrics.length - visibleMetrics.length);
               const runTitle = item.label ?? item.scenario ?? item.run_id;
@@ -632,6 +677,13 @@ export default function App() {
                   <div className="run-card-topline">
                     <span className={`status-pill ${item.exec_status}`}>{item.exec_status}</span>
                     <span className="adapter-pill">{item.adapter}</span>
+                    {isActiveBaseline ? <span className="signal-pill baseline">baseline</span> : null}
+                    {isCompareTarget ? <span className="signal-pill candidate">candidate</span> : null}
+                    {hasTriggeredRegression ? (
+                      <span className="signal-pill regression">
+                        {compareTriggeredFlags.length} regression
+                      </span>
+                    ) : null}
                     <span className="timestamp">{formatRelativeAge(item.started_at)}</span>
                   </div>
                   <div className="run-card-title">
@@ -789,24 +841,87 @@ export default function App() {
               </section>
 
               {compareSummary ? (
-                <Panel
-                  title="Compare Context"
-                  subtitle="The selected run is the base on the left. The compare target is rendered as the right-hand candidate."
-                >
-                  <div className="compare-summary">
-                    <CompareRunCard title="Base" item={selectedSummary} />
-                    <CompareRunCard title="Candidate" item={compareSummary} />
-                  </div>
-                  {matchingBaselineForCompare ? (
-                    <div className="baseline-inline-note">
-                      Candidate matches active baseline label <strong>{matchingBaselineForCompare.label}</strong> for this scope.
+                <section className="compare-primary">
+                  <Panel
+                    title="Compare Context"
+                    subtitle="The selected run is the base on the left. The compare target is rendered as the right-hand candidate."
+                  >
+                    <div className="compare-summary">
+                      <CompareRunCard title="Base" item={selectedSummary} />
+                      <CompareRunCard title="Candidate" item={compareSummary} />
                     </div>
-                  ) : null}
-                </Panel>
+                    {matchingBaselineForCompare ? (
+                      <div className="baseline-inline-note">
+                        Candidate matches active baseline label <strong>{matchingBaselineForCompare.label}</strong> for this scope.
+                      </div>
+                    ) : null}
+                  </Panel>
+                  <section className="compare-overview-grid">
+                    <article className={`overview-card ${compareStatusChanged ? "changed" : ""}`}>
+                      <span className="section-label">Status</span>
+                      <strong>
+                        {detail.manifest.runtime.exec_status} →{" "}
+                        {candidateDetail?.manifest.runtime.exec_status ?? EMPTY_TOKEN}
+                      </strong>
+                      <small>
+                        {compareStatusChanged ? "Execution state changed" : "Execution state unchanged"}
+                      </small>
+                    </article>
+                    <article className={`overview-card ${warningDelta && warningDelta !== 0 ? "changed" : ""}`}>
+                      <span className="section-label">Warnings</span>
+                      <strong>
+                        {detail.manifest.summary.warning_count} →{" "}
+                        {candidateDetail?.manifest.summary.warning_count ?? EMPTY_TOKEN}
+                      </strong>
+                      <small>{formatDeltaText(warningDelta, "warning")}</small>
+                    </article>
+                    <article className={`overview-card ${artifactDelta && artifactDelta !== 0 ? "changed" : ""}`}>
+                      <span className="section-label">Artifacts</span>
+                      <strong>
+                        {detail.manifest.artifacts.length} →{" "}
+                        {candidateDetail?.manifest.artifacts.length ?? EMPTY_TOKEN}
+                      </strong>
+                      <small>{formatDeltaText(artifactDelta, "artifact")}</small>
+                    </article>
+                    <article className={`overview-card ${compareTriggeredFlags.length > 0 ? "alert" : ""}`}>
+                      <span className="section-label">Regression Flags</span>
+                      <strong>{compareTriggeredFlags.length}</strong>
+                      <small>
+                        {compareTriggeredFlags.length > 0
+                          ? "Triggered against the active baseline"
+                          : "No triggered flags for this candidate"}
+                      </small>
+                    </article>
+                  </section>
+                </section>
               ) : null}
 
               {compareSummary && compareReport ? (
                 <>
+                  <Panel
+                    title="Key Delta Highlights"
+                    subtitle="Primary and high-signal metric changes promoted ahead of the full diff tables."
+                  >
+                    <div className="compare-highlight-grid">
+                      {compareHighlights.length > 0 ? (
+                        compareHighlights.map((diff) => (
+                          <article className="overview-card metric-delta" key={`${diff.group_name}:${diff.key}`}>
+                            <span className="section-label">{compactMetricLabel(diff.key)}</span>
+                            <strong>
+                              {formatDiffMetric(diff.left_num, diff.left_text, diff.unit)} →{" "}
+                              {formatDiffMetric(diff.right_num, diff.right_text, diff.unit)}
+                            </strong>
+                            <small>
+                              {formatNumericDelta(diff.abs_delta, diff.unit)} · {formatPercentDelta(diff.pct_delta)}
+                            </small>
+                          </article>
+                        ))
+                      ) : (
+                        <span className="quiet">No numeric metric deltas available yet.</span>
+                      )}
+                    </div>
+                  </Panel>
+
                   <Panel
                     title="Regression Flags"
                     subtitle="Candidate run evaluated against the active baseline for the same scope using stored regression rules."
@@ -1245,6 +1360,35 @@ function selectCuratedMetrics(metrics: MetricRecord[]): MetricRecord[] {
     }
     return left.key.length - right.key.length;
   });
+}
+
+function selectCompareHighlights(
+  report: CompareReport | null,
+  primaryMetrics: MetricRecord[],
+) {
+  if (!report) {
+    return [];
+  }
+  const primaryKeys = new Set(primaryMetrics.map((metric) => metric.key));
+  return [...report.metric_diffs]
+    .filter((diff) => diff.abs_delta != null || diff.pct_delta != null)
+    .sort((left, right) => {
+      const leftPrimary = primaryKeys.has(left.key) ? 1 : 0;
+      const rightPrimary = primaryKeys.has(right.key) ? 1 : 0;
+      if (leftPrimary !== rightPrimary) {
+        return rightPrimary - leftPrimary;
+      }
+      return Math.abs(right.abs_delta ?? 0) - Math.abs(left.abs_delta ?? 0);
+    })
+    .slice(0, 6);
+}
+
+function formatDeltaText(delta: number | null, noun: string): string {
+  if (delta == null || delta === 0) {
+    return `No ${noun} count change`;
+  }
+  const prefix = delta > 0 ? "+" : "";
+  return `${prefix}${delta} ${noun}${Math.abs(delta) === 1 ? "" : "s"}`;
 }
 
 function joinPath(base: string, relPath: string): string {
