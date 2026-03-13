@@ -962,7 +962,7 @@ export default function App() {
           <div className="section-heading">
             <div>
               <p className="section-label">Inspection</p>
-              <h2>{compareTargetId ? "Compare and inspect" : "Run inspection"}</h2>
+              <h2>{compareTargetId ? "Compare Workspace" : "Run inspection"}</h2>
             </div>
             {loadingDetail || loadingCompare ? (
               <span className="quiet">{loadingCompare ? "Comparing..." : "Loading..."}</span>
@@ -976,77 +976,23 @@ export default function App() {
             </div>
           ) : (
             <div className="detail-scroll">
-              <section className="detail-hero">
-                <div className="detail-copy">
-                  <div className="detail-title-row">
-                    <span className={`status-pill ${detail.manifest.runtime.exec_status}`}>
-                      {detail.manifest.runtime.exec_status}
-                    </span>
-                    <span className="adapter-pill">{detail.manifest.source.adapter}</span>
-                    {compareSummary ? <span className="compare-badge">vs {compareSummary.run_id}</span> : null}
-                  </div>
-                  <h3>{selectedTitle}</h3>
-                  <p>{selectedContext || EMPTY_TOKEN}</p>
-                  <div className="detail-kicker-row">
-                    <span>{selectedKicker || EMPTY_TOKEN}</span>
-                  </div>
-                </div>
-                <div className="detail-root">
-                  <div className="detail-actions">
-                    <button className="baseline-button" onClick={handleSetBaseline} type="button">
-                      {savingBaseline ? "Saving Baseline..." : "Set Active Baseline"}
-                    </button>
-                    <button
-                      className="utility-button"
-                      onClick={() => handleOpenPath(detail.run_root)}
-                      type="button"
-                    >
-                      Open Folder
-                    </button>
-                    <button
-                      className="utility-button"
-                      onClick={() => handleCopyPath(detail.run_root)}
-                      type="button"
-                    >
-                      Copy Path
-                    </button>
-                    <button
-                      className="utility-button"
-                      onClick={() => handleOpenPath(joinPath(detail.run_root, "run.json"))}
-                      type="button"
-                    >
-                      Open run.json
-                    </button>
-                    <button
-                      className="utility-button"
-                      onClick={() => handleOpenPath(joinPath(detail.run_root, "run.json"), true)}
-                      type="button"
-                    >
-                      Reveal run.json
-                    </button>
-                  </div>
-                  <span>Run root</span>
-                  <code>{detail.run_root}</code>
-                  {pathNotice ? <small className="quiet">{pathNotice}</small> : null}
-                </div>
-              </section>
-
               {compareSummary ? (
-                <section className="compare-primary">
-                  <Panel
-                    title="Compare Context"
-                    subtitle="The selected run is the base on the left. The compare target is rendered as the right-hand candidate."
-                  >
-                    <div className="compare-summary">
-                      <CompareRunCard title="Base" item={selectedSummary} />
-                      <CompareRunCard title="Candidate" item={compareSummary} />
+                <section className="compare-workspace-hero">
+                  <div className="compare-workspace-heading">
+                    <div className="detail-title-row">
+                      <span className="compare-badge prominent">Base vs Candidate</span>
+                      <span className="adapter-pill">{detail.manifest.source.adapter}</span>
+                      {matchingBaselineForCompare ? (
+                        <span className="signal-pill baseline">matches baseline</span>
+                      ) : null}
                     </div>
-                    {matchingBaselineForCompare ? (
-                      <div className="baseline-inline-note">
-                        Candidate matches active baseline label <strong>{matchingBaselineForCompare.label}</strong> for this scope.
-                      </div>
-                    ) : null}
-                  </Panel>
+                    <h3>Compare the selected base run against the queued candidate.</h3>
+                    <p>Lead with deltas and regressions first. Deeper run detail stays available below.</p>
+                  </div>
+                  <div className="compare-summary">
+                    <CompareRunCard title="Base" item={selectedSummary} />
+                    <CompareRunCard title="Candidate" item={compareSummary} />
+                  </div>
                   <section className="compare-overview-grid">
                     <article className={`overview-card ${compareStatusChanged ? "changed" : ""}`}>
                       <span className="section-label">Status</span>
@@ -1084,8 +1030,91 @@ export default function App() {
                       </small>
                     </article>
                   </section>
+                  <div className="compare-workspace-actions">
+                    <button className="baseline-button" onClick={handleSetBaseline} type="button">
+                      {savingBaseline ? "Saving Baseline..." : "Set Base As Baseline"}
+                    </button>
+                    <button
+                      className="utility-button"
+                      onClick={() => handleOpenPath(detail.run_root)}
+                      type="button"
+                    >
+                      Open Base Folder
+                    </button>
+                    {candidateDetail ? (
+                      <button
+                        className="utility-button"
+                        onClick={() => handleOpenPath(candidateDetail.run_root)}
+                        type="button"
+                      >
+                        Open Candidate Folder
+                      </button>
+                    ) : null}
+                    <button
+                      className="utility-button"
+                      onClick={() => handleCopyPath(detail.run_root)}
+                      type="button"
+                    >
+                      Copy Base Path
+                    </button>
+                  </div>
+                  {pathNotice ? <small className="quiet">{pathNotice}</small> : null}
                 </section>
-              ) : null}
+              ) : (
+                <section className="detail-hero">
+                  <div className="detail-copy">
+                    <div className="detail-title-row">
+                      <span className={`status-pill ${detail.manifest.runtime.exec_status}`}>
+                        {detail.manifest.runtime.exec_status}
+                      </span>
+                      <span className="adapter-pill">{detail.manifest.source.adapter}</span>
+                    </div>
+                    <h3>{selectedTitle}</h3>
+                    <p>{selectedContext || EMPTY_TOKEN}</p>
+                    <div className="detail-kicker-row">
+                      <span>{selectedKicker || EMPTY_TOKEN}</span>
+                    </div>
+                  </div>
+                  <div className="detail-root">
+                    <div className="detail-actions">
+                      <button className="baseline-button" onClick={handleSetBaseline} type="button">
+                        {savingBaseline ? "Saving Baseline..." : "Set Active Baseline"}
+                      </button>
+                      <button
+                        className="utility-button"
+                        onClick={() => handleOpenPath(detail.run_root)}
+                        type="button"
+                      >
+                        Open Folder
+                      </button>
+                      <button
+                        className="utility-button"
+                        onClick={() => handleCopyPath(detail.run_root)}
+                        type="button"
+                      >
+                        Copy Path
+                      </button>
+                      <button
+                        className="utility-button"
+                        onClick={() => handleOpenPath(joinPath(detail.run_root, "run.json"))}
+                        type="button"
+                      >
+                        Open run.json
+                      </button>
+                      <button
+                        className="utility-button"
+                        onClick={() => handleOpenPath(joinPath(detail.run_root, "run.json"), true)}
+                        type="button"
+                      >
+                        Reveal run.json
+                      </button>
+                    </div>
+                    <span>Run root</span>
+                    <code>{detail.run_root}</code>
+                    {pathNotice ? <small className="quiet">{pathNotice}</small> : null}
+                  </div>
+                </section>
+              )}
 
               {compareSummary && compareReport ? (
                 <>
