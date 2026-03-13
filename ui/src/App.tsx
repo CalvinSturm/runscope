@@ -398,6 +398,26 @@ export default function App() {
   const candidatePrimaryMetric = compareSummary
     ? compareSummary.primary_metrics.find((metric) => metric.key === compactMetricKey) ?? null
     : null;
+  const compareDecisionSummary =
+    compareTriggeredFlags.length > 0
+      ? `${compareTriggeredFlags.length} triggered regression flag${compareTriggeredFlags.length === 1 ? "" : "s"}`
+      : compareStatusChanged
+        ? "Execution status changed"
+        : warningGroups.introduced.length > 0
+          ? `${warningGroups.introduced.length} new warning${warningGroups.introduced.length === 1 ? "" : "s"} introduced`
+          : compareHighlights.length > 0
+            ? "Metric deltas detected"
+            : "No high-signal changes detected";
+  const compareDecisionDetail =
+    compareTriggeredFlags.length > 0
+      ? "Triggered rules should be reviewed before promoting this candidate."
+      : compareStatusChanged
+        ? "The candidate execution outcome differs from the base even without a triggered rule."
+        : warningGroups.introduced.length > 0
+          ? "Warning behavior changed even though no triggered regression rule fired."
+          : compareHighlights.length > 0
+            ? "Numeric metric movement exists but did not trigger a regression rule."
+            : "No triggered regressions, warning shifts, or top-level metric movement were detected.";
   const filterChips = [
     {
       label: "LocalAgent",
@@ -989,10 +1009,10 @@ export default function App() {
                     <h3>Compare the selected base run against the queued candidate.</h3>
                     <p>Lead with deltas and regressions first. Deeper run detail stays available below.</p>
                   </div>
-                  <div className="compare-summary">
+                  <section className="compare-identity-ribbon">
                     <CompareRunCard title="Base" item={selectedSummary} />
                     <CompareRunCard title="Candidate" item={compareSummary} />
-                  </div>
+                  </section>
                   <section className="compare-overview-grid">
                     <article className={`overview-card ${compareStatusChanged ? "changed" : ""}`}>
                       <span className="section-label">Status</span>
@@ -1118,29 +1138,78 @@ export default function App() {
 
               {compareSummary && compareReport ? (
                 <>
-                  <Panel
-                    title="Key Delta Highlights"
-                    subtitle="Primary and high-signal metric changes promoted ahead of the full diff tables."
-                  >
-                    <div className="compare-highlight-grid">
-                      {compareHighlights.length > 0 ? (
-                        compareHighlights.map((diff) => (
-                          <article className="overview-card metric-delta" key={`${diff.group_name}:${diff.key}`}>
-                            <span className="section-label">{compactMetricLabel(diff.key)}</span>
-                            <strong>
-                              {formatDiffMetric(diff.left_num, diff.left_text, diff.unit)} →{" "}
-                              {formatDiffMetric(diff.right_num, diff.right_text, diff.unit)}
-                            </strong>
-                            <small>
-                              {formatNumericDelta(diff.abs_delta, diff.unit)} · {formatPercentDelta(diff.pct_delta)}
-                            </small>
+                  <section className="compare-decision-stack">
+                    <Panel
+                      title="Regression Outcome"
+                      subtitle="Start here: whether this candidate looks suspicious against the current baseline and compare scope."
+                    >
+                      <div className="compare-outcome-grid">
+                        <article
+                          className={`overview-card compare-decision-card ${
+                            compareTriggeredFlags.length > 0
+                              ? "alert"
+                              : compareStatusChanged || warningGroups.introduced.length > 0
+                                ? "changed"
+                                : ""
+                          }`}
+                        >
+                          <span className="section-label">Decision</span>
+                          <strong>{compareDecisionSummary}</strong>
+                          <small>{compareDecisionDetail}</small>
+                        </article>
+                        <article className={`overview-card ${compareHighlights.length > 0 ? "changed" : ""}`}>
+                          <span className="section-label">Top Delta</span>
+                          <strong>
+                            {compareHighlights[0]
+                              ? compactMetricLabel(compareHighlights[0].key)
+                              : EMPTY_TOKEN}
+                          </strong>
+                          <small>
+                            {compareHighlights[0]
+                              ? `${formatNumericDelta(compareHighlights[0].abs_delta, compareHighlights[0].unit)} · ${formatPercentDelta(compareHighlights[0].pct_delta)}`
+                              : compareDecisionSummary}
+                          </small>
+                        </article>
+                        <article className={`overview-card ${warningDelta && warningDelta !== 0 ? "changed" : ""}`}>
+                          <span className="section-label">Warning Shift</span>
+                          <strong>{formatDeltaText(warningDelta, "warning")}</strong>
+                          <small>
+                            {warningGroups.introduced.length > 0
+                              ? `${warningGroups.introduced.length} new warning${warningGroups.introduced.length === 1 ? "" : "s"} introduced`
+                              : "No newly introduced warnings"}
+                          </small>
+                        </article>
+                      </div>
+                    </Panel>
+
+                    <Panel
+                      title="Ranked Metric Deltas"
+                      subtitle="Highest-value metric changes first, ordered by the active compare sort."
+                    >
+                      <div className="compare-highlight-grid ranked">
+                        {compareHighlights.length > 0 ? (
+                          compareHighlights.map((diff) => (
+                            <article className="overview-card metric-delta" key={`${diff.group_name}:${diff.key}`}>
+                              <span className="section-label">{compactMetricLabel(diff.key)}</span>
+                              <strong>
+                                {formatDiffMetric(diff.left_num, diff.left_text, diff.unit)} →{" "}
+                                {formatDiffMetric(diff.right_num, diff.right_text, diff.unit)}
+                              </strong>
+                              <small>
+                                {formatNumericDelta(diff.abs_delta, diff.unit)} · {formatPercentDelta(diff.pct_delta)}
+                              </small>
+                            </article>
+                          ))
+                        ) : (
+                          <article className="overview-card compare-empty-state">
+                            <span className="section-label">No Numeric Deltas</span>
+                            <strong>{compareDecisionSummary}</strong>
+                            <small>{compareDecisionDetail}</small>
                           </article>
-                        ))
-                      ) : (
-                        <span className="quiet">No numeric metric deltas available yet.</span>
-                      )}
-                    </div>
-                  </Panel>
+                        )}
+                      </div>
+                    </Panel>
+                  </section>
 
                   <Panel
                     title="Warning Delta"
@@ -1188,6 +1257,7 @@ export default function App() {
                     )}
                   </Panel>
 
+                  <section className="compare-secondary-stack">
                   <Panel title="Metadata Diffs" subtitle="Core-owned metadata comparisons across the normalized manifest.">
                     <table className="data-table">
                       <thead>
@@ -1264,41 +1334,43 @@ export default function App() {
                         </button>
                       </div>
                     </div>
-                    <table className="data-table">
-                      <thead>
-                        <tr>
-                          <th>Metric</th>
-                          <th>Base</th>
-                          <th>Candidate</th>
-                          <th>Abs Delta</th>
-                          <th>Percent Delta</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedMetricDiffs.length > 0 ? (
-                          sortedMetricDiffs.map((diff) => (
-                          <tr key={`${diff.group_name}:${diff.key}`}>
-                            <td>
-                              <div className="metric-name-cell">
-                                <strong>{compactMetricLabel(diff.key)}</strong>
-                                <span>{formatOptionalText(diff.group_name)}</span>
-                              </div>
-                            </td>
-                            <td>{formatDiffMetric(diff.left_num, diff.left_text, diff.unit)}</td>
-                            <td>{formatDiffMetric(diff.right_num, diff.right_text, diff.unit)}</td>
-                            <td>{formatNumericDelta(diff.abs_delta, diff.unit)}</td>
-                            <td>{formatPercentDelta(diff.pct_delta)}</td>
-                          </tr>
-                          ))
-                        ) : (
+                    <div className="table-scroll-shell metric-diffs-shell">
+                      <table className="data-table">
+                        <thead>
                           <tr>
-                            <td colSpan={5} className="quiet">
-                              No metric diffs matched the current compare filters.
-                            </td>
+                            <th>Metric</th>
+                            <th>Base</th>
+                            <th>Candidate</th>
+                            <th>Abs Delta</th>
+                            <th>Percent Delta</th>
                           </tr>
-                        )}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {sortedMetricDiffs.length > 0 ? (
+                            sortedMetricDiffs.map((diff) => (
+                            <tr key={`${diff.group_name}:${diff.key}`}>
+                              <td>
+                                <div className="metric-name-cell">
+                                  <strong>{compactMetricLabel(diff.key)}</strong>
+                                  <span>{formatOptionalText(diff.group_name)}</span>
+                                </div>
+                              </td>
+                              <td>{formatDiffMetric(diff.left_num, diff.left_text, diff.unit)}</td>
+                              <td>{formatDiffMetric(diff.right_num, diff.right_text, diff.unit)}</td>
+                              <td>{formatNumericDelta(diff.abs_delta, diff.unit)}</td>
+                              <td>{formatPercentDelta(diff.pct_delta)}</td>
+                            </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={5} className="quiet">
+                                No metric diffs matched the current compare filters.
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
                   </Panel>
 
                   <Panel title="Artifact Diffs" subtitle="Artifact presence and managed relative path changes between the two runs.">
@@ -1329,32 +1401,39 @@ export default function App() {
                       </tbody>
                     </table>
                   </Panel>
+                  </section>
                 </>
               ) : null}
 
-              <section className="detail-grid">
-                <InfoCard title="Identity">
+              {compareSummary ? (
+                <div className="compare-reference-header">
+                  <span className="section-label">Base Run Reference</span>
+                  <p>Reference panels stay available below, but compare outcome and diffs lead the workflow.</p>
+                </div>
+              ) : null}
+              <section className={`detail-grid ${compareSummary ? "compare-reference-grid" : ""}`}>
+                <InfoCard title="Identity" subtle={Boolean(compareSummary)}>
                   <InfoRow label="Project" value={detail.manifest.project.slug} />
                   <InfoRow label="Suite" value={detail.manifest.identity.suite} />
                   <InfoRow label="Scenario" value={detail.manifest.identity.scenario} />
                   <InfoRow label="Label" value={detail.manifest.identity.label} />
                   <InfoRow label="Run ID" value={detail.manifest.run_id} />
                 </InfoCard>
-                <InfoCard title="Execution">
+                <InfoCard title="Execution" subtle={Boolean(compareSummary)}>
                   <InfoRow label="Status" value={detail.manifest.runtime.exec_status} />
                   <InfoRow label="Started" value={formatDateTime(detail.manifest.runtime.started_at)} />
                   <InfoRow label="Finished" value={formatDateTime(detail.manifest.runtime.finished_at)} />
                   <InfoRow label="Duration" value={formatDuration(detail.manifest.runtime.duration_ms)} />
                   <InfoRow label="Warnings" value={detail.manifest.summary.warning_count.toString()} />
                 </InfoCard>
-                <InfoCard title="Environment">
+                <InfoCard title="Environment" subtle={Boolean(compareSummary)}>
                   <InfoRow label="Backend" value={detail.manifest.environment?.backend} />
                   <InfoRow label="Model" value={detail.manifest.environment?.model} />
                   <InfoRow label="Precision" value={detail.manifest.environment?.precision} />
                   <InfoRow label="Machine" value={detail.manifest.environment?.machine_name} />
                   <InfoRow label="GPU" value={detail.manifest.environment?.gpu} />
                 </InfoCard>
-                <InfoCard title="Workload">
+                <InfoCard title="Workload" subtle={Boolean(compareSummary)}>
                   <InfoRow label="Dataset" value={detail.manifest.workload?.dataset} />
                   <InfoRow
                     label="Input count"
@@ -1935,9 +2014,9 @@ function Panel(props: { title: string; subtitle: string; children: ReactNode; cl
   );
 }
 
-function InfoCard(props: { title: string; children: ReactNode }) {
+function InfoCard(props: { title: string; children: ReactNode; subtle?: boolean }) {
   return (
-    <section className="info-card">
+    <section className={`info-card ${props.subtle ? "subtle-panel" : ""}`.trim()}>
       <h3>{props.title}</h3>
       <div className="info-rows">{props.children}</div>
     </section>
