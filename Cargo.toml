@@ -2,6 +2,7 @@
 members = [
     "crates/runscope-core",
     "crates/runscope-cli",
+    "apps/desktop/src-tauri",
 ]
 resolver = "2"
 
