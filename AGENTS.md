@@ -176,6 +176,26 @@ Rules:
 - adapters return warnings for partial metadata instead of failing when possible
 - adapters must preserve raw source files as managed artifacts through the ingest pipeline
 
+### Producer integration notes
+
+#### `VideoForge`
+
+Current preferred ingest target:
+
+- the output-adjacent `.videoforge_runs/<job-id>/` directory produced by VideoForge when `VIDEOFORGE_ENABLE_RUN_ARTIFACTS=1` is enabled
+
+Current artifact preference order:
+
+1. `videoforge_run.json`
+2. `videoforge.run_manifest.v1.json` + `videoforge.runtime_config_snapshot.v1.json` + `videoforge.run_observed_metrics.v1.json`
+
+Adapter/file notes:
+
+- adapter implementation lives in `crates/runscope-core/src/adapters/videoforge.rs`
+- prefer `videoforge_run.json` when present
+- if the friendly bundle is missing, synthesize from the schema-versioned v1 files instead of failing
+- preserve the raw schema-versioned files as first-class managed artifacts, not as opaque leftovers
+
 ### `store/`
 Owns managed filesystem layout.
 
