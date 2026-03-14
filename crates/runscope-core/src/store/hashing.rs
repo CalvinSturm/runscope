@@ -46,6 +46,13 @@ pub fn sha256_hex_dir(path: &Path) -> Result<String, RunScopeError> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
+pub fn sha256_hex_path(path: &Path) -> Result<String, RunScopeError> {
+    if path.is_file() {
+        return sha256_hex_file(path);
+    }
+    sha256_hex_dir(path)
+}
+
 pub fn canonical_json_sha256<T: Serialize>(value: &T) -> Result<String, RunScopeError> {
     Ok(sha256_hex_str(&serde_json::to_string(value)?))
 }

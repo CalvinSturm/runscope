@@ -114,6 +114,75 @@ fn ingest_localagent_sample_persists_expected_warning_count() {
 }
 
 #[test]
+fn ingest_localagent_eval_results_json_file() {
+    let temp = tempdir().unwrap();
+    let paths = AppPaths {
+        db_path: temp.path().join("runscope.sqlite"),
+        data_dir: temp.path().join("data"),
+    };
+    let results_json = temp.path().join("results_2026-03-07T22-20-30.0697001Z.json");
+    fs::write(
+        &results_json,
+        r#"{
+            "schema_version":"openagent.eval.v1",
+            "created_at":"2026-03-07T22:20:30Z",
+            "config":{
+                "provider":"ollama",
+                "models":["qwen2.5-coder-7b-instruct@q8_0"],
+                "pack":"commoncodingux",
+                "mode":"single",
+                "runs_per_task":2,
+                "max_steps":60,
+                "timeout_seconds":120
+            },
+            "summary":{"total_runs":4,"passed":3,"failed":1,"skipped":0,"pass_rate":0.75},
+            "runs":[
+                {
+                    "model":"qwen2.5-coder-7b-instruct@q8_0",
+                    "task_id":"task-a",
+                    "run_index":0,
+                    "run_id":"run-a",
+                    "exit_reason":"completed",
+                    "status":"passed",
+                    "required_flags":[],
+                    "passed":true,
+                    "failures":[],
+                    "stats":{"steps":10,"tool_calls":4},
+                    "metrics":{"steps":10,"tool_calls":4,"tool_sequence":[],"tool_calls_by_side_effects":{},"bytes_read":100,"bytes_written":50,"wall_time_ms":1200,"verifier_time_ms":200,"provider":{"http_retries":0,"provider_errors":0},"tool_retries":0,"tool_failures_by_class":{},"step_invariant_violations":0},
+                    "verifier":{"ran":true,"ok":true,"summary":"ok","stdout_truncated":false,"stderr_truncated":false},
+                    "ux_metric_rows":[]
+                }
+            ],
+            "ux_summary_metric_rows":[
+                {"key":"ux.task_success_rate","group_name":"ux","value_num":0.75,"direction":"higher_is_better","is_primary":true}
+            ]
+        }"#,
+    )
+    .unwrap();
+
+    let result = IngestService::ingest_dir(&paths, ingest_request(results_json.clone())).unwrap();
+    let artifact_root = PathBuf::from(result.artifact_root.unwrap());
+    let manifest: RunManifestV1 =
+        serde_json::from_str(&fs::read_to_string(artifact_root.join("run.json")).unwrap()).unwrap();
+
+    assert_eq!(manifest.source.source_kind, SourceKind::ImportedManifest);
+    assert_eq!(manifest.identity.suite.as_deref(), Some("commoncodingux"));
+    assert_eq!(
+        manifest.identity.label.as_deref(),
+        Some("commoncodingux qwen2.5-coder-7b-instruct@q8_0")
+    );
+    assert_eq!(manifest.runtime.exec_status, ExecStatus::Fail);
+    assert!(artifact_root
+        .join("raw/results_2026-03-07T22-20-30.0697001Z.json")
+        .is_file());
+    assert!(manifest
+        .adapter_payload
+        .get("localagent")
+        .and_then(|value| value.get("eval_summary"))
+        .is_some());
+}
+
+#[test]
 fn ingest_videoforge_sample() {
     let temp = tempdir().unwrap();
     let paths = AppPaths {

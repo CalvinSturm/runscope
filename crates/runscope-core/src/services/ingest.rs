@@ -4,7 +4,7 @@ use crate::db::{find_existing_run_by_fingerprint, insert_ingested_run};
 use crate::domain::{AdapterWarning, RunManifestV1};
 use crate::error::RunScopeError;
 use crate::store::{
-    canonical_json_sha256, copied_artifacts_to_records, managed_run_root, sha256_hex_dir,
+    canonical_json_sha256, copied_artifacts_to_records, managed_run_root, sha256_hex_path,
     ArtifactStore,
 };
 use serde::Serialize;
@@ -65,7 +65,7 @@ impl IngestService {
         parsed.manifest.summary.warning_count = parsed.warnings.len() as u32;
         parsed.manifest.validate()?;
 
-        let source_hash = sha256_hex_dir(&req.artifact_dir)?;
+        let source_hash = sha256_hex_path(&req.artifact_dir)?;
         let ingest_fingerprint = compute_ingest_fingerprint(&parsed.manifest, &source_hash)?;
 
         if let Some(existing) = find_existing_run_by_fingerprint(&conn, &ingest_fingerprint)? {

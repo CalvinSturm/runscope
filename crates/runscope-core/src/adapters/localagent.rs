@@ -19,6 +19,9 @@ impl RunAdapter for LocalAgentAdapter {
     }
 
     fn detect(&self, artifact_dir: &Path) -> Result<bool, RunScopeError> {
+        if artifact_dir.is_file() {
+            return detect_manifest_signature(artifact_dir);
+        }
         if !artifact_dir.is_dir() {
             return Ok(false);
         }
@@ -47,10 +50,16 @@ impl RunAdapter for LocalAgentAdapter {
         let suite = json_string(&manifest_value, &["identity", "suite"])
             .or_else(|| json_string(&manifest_value, &["suite"]));
         let scenario = json_string(&manifest_value, &["identity", "scenario"])
-            .or_else(|| json_string(&manifest_value, &["scenario"]));
+            .or_else(|| json_string(&manifest_value, &["scenario"]))
+            .or_else(|| json_string(&manifest_value, &["config", "task_kind"]))
+            .or_else(|| json_string(&manifest_value, &["config", "instruction_task_profile_task_kind"]));
+        let label = json_string(&manifest_value, &["identity", "label"])
+            .or_else(|| json_string(&manifest_value, &["label"]))
+            .or_else(|| derive_eval_label(&manifest_value));
         let status_value = json_string(&manifest_value, &["runtime", "exec_status"])
             .or_else(|| json_string(&manifest_value, &["exec_status"]))
-            .or_else(|| json_string(&manifest_value, &["status"]));
+            .or_else(|| json_string(&manifest_value, &["status"]))
+            .or_else(|| derive_eval_exec_status(&manifest_value));
         let exec_status = parse_exec_status(status_value.as_deref());
         if suite.is_none() {
             warnings.push(AdapterWarning {
@@ -121,18 +130,22 @@ impl RunAdapter for LocalAgentAdapter {
                 },
                 source: RunSource {
                     adapter: self.name().to_string(),
-                    source_kind: SourceKind::ArtifactDir,
+                    source_kind: if artifact_dir.is_file() {
+                        SourceKind::ImportedManifest
+                    } else {
+                        SourceKind::ArtifactDir
+                    },
                     source_path: Some(artifact_dir.display().to_string()),
                     external_run_id: json_string(&manifest_value, &["source", "external_run_id"])
                         .or_else(|| json_string(&manifest_value, &["external_run_id"]))
-                        .or_else(|| json_string(&manifest_value, &["run_id"])),
+                        .or_else(|| json_string(&manifest_value, &["run_id"]))
+                        .or_else(|| json_string(&manifest_value, &["created_at"])),
                     ingested_at: now_utc_rfc3339(),
                 },
                 identity: RunIdentity {
-                    suite,
+                    suite: suite.or_else(|| json_string(&manifest_value, &["config", "pack"])),
                     scenario,
-                    label: json_string(&manifest_value, &["identity", "label"])
-                        .or_else(|| json_string(&manifest_value, &["label"])),
+                    label,
                 },
                 git: Some(GitContext {
                     commit_sha: json_string(&manifest_value, &["git", "commit_sha"])
@@ -144,7 +157,8 @@ impl RunAdapter for LocalAgentAdapter {
                 }),
                 runtime: RuntimeContext {
                     started_at: started_at_value(&manifest_value),
-                    finished_at: finished_at_value(&manifest_value),
+                    finished_at: finished_at_value(&manifest_value)
+                        .or_else(|| json_string(&manifest_value, &["created_at"])),
                     duration_ms: duration_ms_value(&manifest_value),
                     exit_code: json_i32(&manifest_value, &["runtime", "exit_code"])
                         .or_else(|| json_i32(&manifest_value, &["exit_code"])),
@@ -187,6 +201,7 @@ fn known_manifest_names() -> &'static [&'static str] {
         "localagent_run.json",
         "localagent_manifest.json",
         "localagent_report.json",
+        "results.json",
         "run.json",
         "report.json",
     ]
@@ -194,6 +209,13 @@ fn known_manifest_names() -> &'static [&'static str] {
 
 fn detect_manifest_signature(path: &Path) -> Result<bool, RunScopeError> {
     let value: Value = serde_json::from_str(&fs::read_to_string(path)?)?;
+
+    if json_string(&value, &["schema_version"])
+        .map(|value| value.eq_ignore_ascii_case("openagent.eval.v1"))
+        .unwrap_or(false)
+    {
+        return Ok(true);
+    }
 
     if json_string(&value, &["project", "slug"])
         .map(|value| value.eq_ignore_ascii_case("localagent"))
@@ -219,10 +241,15 @@ fn detect_manifest_signature(path: &Path) -> Result<bool, RunScopeError> {
     let has_localagent_filename = path
         .file_name()
         .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase().starts_with("localagent_"))
+        .map(|value| {
+            let value = value.to_ascii_lowercase();
+            value.starts_with("localagent_") || value.starts_with("results_")
+        })
         .unwrap_or(false);
     let has_expected_shape = value.get("metrics").is_some()
         || value.get("metric_map").is_some()
+        || value.get("runs").is_some()
+        || value.get("summary").is_some()
         || value.get("suite").is_some()
         || value.get("scenario").is_some()
         || value.get("command").is_some()
@@ -232,6 +259,9 @@ fn detect_manifest_signature(path: &Path) -> Result<bool, RunScopeError> {
 }
 
 fn read_candidate_manifest(artifact_dir: &Path) -> Result<Value, RunScopeError> {
+    if artifact_dir.is_file() {
+        return Ok(serde_json::from_str(&fs::read_to_string(artifact_dir)?)?);
+    }
     for name in known_manifest_names() {
         let path = artifact_dir.join(name);
         if path.is_file() {
@@ -242,6 +272,19 @@ fn read_candidate_manifest(artifact_dir: &Path) -> Result<Value, RunScopeError> 
 }
 
 fn collect_source_files(artifact_dir: &Path) -> Result<Vec<SourceFile>, RunScopeError> {
+    if artifact_dir.is_file() {
+        let file_name = artifact_dir
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("run.json");
+        let (_, role, media_type) = infer_copy_target(artifact_dir, file_name);
+        return Ok(vec![SourceFile {
+            source_path: artifact_dir.to_path_buf(),
+            target_rel_path: format!("raw/{file_name}"),
+            role,
+            media_type,
+        }]);
+    }
     let mut files = Vec::new();
     visit_dir(artifact_dir, artifact_dir, &mut files)?;
     files.sort_by(|left, right| left.target_rel_path.cmp(&right.target_rel_path));
@@ -321,10 +364,35 @@ fn infer_copy_target(relative: &Path, file_name: &str) -> (&'static str, String,
 
 fn parse_exec_status(value: Option<&str>) -> ExecStatus {
     match value.unwrap_or("unknown") {
+        "passed" => ExecStatus::Pass,
         "pass" => ExecStatus::Pass,
+        "failed" => ExecStatus::Fail,
         "fail" => ExecStatus::Fail,
         "error" => ExecStatus::Error,
         _ => ExecStatus::Unknown,
+    }
+}
+
+fn derive_eval_label(value: &Value) -> Option<String> {
+    let pack = json_string(value, &["config", "pack"]);
+    let models = json_string_array(value, &["config", "models"]);
+    match (pack, models) {
+        (Some(pack), Some(models)) if !models.is_empty() => Some(format!("{pack} {}", models.join(", "))),
+        (Some(pack), _) => Some(pack),
+        _ => None,
+    }
+}
+
+fn derive_eval_exec_status(value: &Value) -> Option<String> {
+    let summary = value.get("summary")?.as_object()?;
+    let failed = summary.get("failed").and_then(Value::as_u64).unwrap_or(0);
+    let passed = summary.get("passed").and_then(Value::as_u64).unwrap_or(0);
+    if failed > 0 {
+        Some("fail".to_string())
+    } else if passed > 0 {
+        Some("pass".to_string())
+    } else {
+        Some("unknown".to_string())
     }
 }
 
@@ -333,6 +401,7 @@ fn started_at_value(value: &Value) -> Option<String> {
         .or_else(|| json_string(value, &["started_at"]))
         .or_else(|| json_string(value, &["runtime", "start_time"]))
         .or_else(|| json_string(value, &["start_time"]))
+        .or_else(|| json_string(value, &["created_at"]))
 }
 
 fn finished_at_value(value: &Value) -> Option<String> {
@@ -1153,7 +1222,7 @@ mod tests {
     fn parse_promotes_localagent_eval_summary_config_and_rollups_into_adapter_payload() {
         let temp = tempdir().unwrap();
         fs::write(
-            temp.path().join("run.json"),
+            temp.path().join("results_2026-03-07T22-20-30.0697001Z.json"),
             r#"{
                 "schema_version":"openagent.eval.v1",
                 "created_at":"2026-03-07T22:20:30Z",
@@ -1219,7 +1288,9 @@ mod tests {
         )
         .unwrap();
 
-        let parsed = LocalAgentAdapter.parse(temp.path()).unwrap();
+        let parsed = LocalAgentAdapter
+            .parse(&temp.path().join("results_2026-03-07T22-20-30.0697001Z.json"))
+            .unwrap();
         let localagent = parsed
             .manifest
             .adapter_payload
@@ -1250,5 +1321,19 @@ mod tests {
                 .and_then(Value::as_u64),
             Some(1)
         );
+        assert_eq!(parsed.manifest.source.source_kind, SourceKind::ImportedManifest);
+        assert_eq!(
+            parsed.manifest.identity.suite.as_deref(),
+            Some("commoncodingux")
+        );
+        assert_eq!(
+            parsed.manifest.identity.label.as_deref(),
+            Some("commoncodingux qwen2.5-coder-7b-instruct@q8_0")
+        );
+        assert_eq!(parsed.manifest.runtime.exec_status, ExecStatus::Fail);
+        assert!(parsed
+            .files_to_copy
+            .iter()
+            .any(|file| file.target_rel_path.ends_with("results_2026-03-07T22-20-30.0697001Z.json")));
     }
 }
