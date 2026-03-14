@@ -31,6 +31,12 @@ fn list_runs_returns_video_forge_and_localagent_rows() {
         .items
         .iter()
         .any(|item| item.run_id == localagent.run_id && item.project_slug == "localagent"));
+    assert!(page.items.iter().any(|item| {
+        item.run_id == localagent.run_id
+            && item.backend.as_deref() == Some("local")
+            && item.model.as_deref() == Some("assistant-basic")
+            && item.precision.as_deref() == Some("int8")
+    }));
     assert!(page
         .items
         .iter()

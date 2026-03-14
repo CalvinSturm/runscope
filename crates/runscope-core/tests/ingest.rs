@@ -77,6 +77,23 @@ fn ingest_localagent_sample() {
     assert_eq!(manifest.source.adapter, "localagent");
     assert_eq!(manifest.metrics.len(), 1);
     assert_eq!(manifest.artifacts.len(), 2);
+    assert_eq!(manifest.runtime.started_at.as_deref(), Some("2026-03-05T17:17:04Z"));
+    assert_eq!(
+        manifest.environment.as_ref().and_then(|env| env.backend.as_deref()),
+        Some("local")
+    );
+    assert_eq!(
+        manifest.environment.as_ref().and_then(|env| env.model.as_deref()),
+        Some("assistant-basic")
+    );
+    assert_eq!(
+        manifest.workload.as_ref().and_then(|workload| workload.display_command.as_deref()),
+        Some("localagent eval --scenario assistant_basic")
+    );
+    assert_eq!(
+        manifest.workload.as_ref().and_then(|workload| workload.env_snapshot_ref.as_deref()),
+        Some("attachments/env.redacted.json")
+    );
 }
 
 #[test]

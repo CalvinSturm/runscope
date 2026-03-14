@@ -655,6 +655,45 @@ pre {
   color: var(--muted);
 }
 
+.compact-summary-right.has-cue {
+  color: var(--text);
+}
+
+.compact-compare-cue {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: rgba(151, 175, 194, 0.12);
+  color: #d7e6f3;
+}
+
+.compact-compare-cue.base,
+.compact-compare-cue.candidate {
+  background: rgba(78, 192, 141, 0.12);
+  color: #cdf3e0;
+}
+
+.compact-compare-cue.regressed {
+  background: rgba(224, 109, 93, 0.18);
+  color: #ffd9d4;
+}
+
+.compact-compare-cue.improved {
+  background: rgba(78, 192, 141, 0.16);
+  color: #c9f4e0;
+}
+
+.compact-compare-cue.changed,
+.compact-compare-cue.unresolved {
+  background: rgba(217, 161, 74, 0.18);
+  color: #f4deba;
+}
+
 .active-triage-slot {
   display: inline-flex;
   flex-direction: column;

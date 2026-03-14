@@ -1,8 +1,8 @@
 use crate::adapters::traits::{ParsedRun, RunAdapter, SourceFile};
 use crate::domain::{
-    AdapterWarning, ArtifactRecord, ExecStatus, GitContext, MetricDirection, MetricRecord,
-    ProjectRef, RunIdentity, RunManifestV1, RunSource, RuntimeContext, SourceKind, SummaryContext,
-    WorkloadContext, RUN_SCHEMA_VERSION,
+    AdapterWarning, ArtifactRecord, EnvironmentContext, ExecStatus, GitContext, MetricDirection,
+    MetricRecord, ProjectRef, RunIdentity, RunManifestV1, RunSource, RuntimeContext, SourceKind,
+    SummaryContext, WorkloadContext, RUN_SCHEMA_VERSION,
 };
 use crate::error::RunScopeError;
 use crate::services::ingest::{generate_ulid_like, now_utc_rfc3339};
@@ -143,37 +143,33 @@ impl RunAdapter for LocalAgentAdapter {
                         .or_else(|| json_bool(&manifest_value, &["dirty"])),
                 }),
                 runtime: RuntimeContext {
-                    started_at: json_string(&manifest_value, &["runtime", "started_at"])
-                        .or_else(|| json_string(&manifest_value, &["started_at"])),
-                    finished_at: json_string(&manifest_value, &["runtime", "finished_at"])
-                        .or_else(|| json_string(&manifest_value, &["finished_at"])),
-                    duration_ms: json_u64(&manifest_value, &["runtime", "duration_ms"])
-                        .or_else(|| json_u64(&manifest_value, &["duration_ms"])),
+                    started_at: started_at_value(&manifest_value),
+                    finished_at: finished_at_value(&manifest_value),
+                    duration_ms: duration_ms_value(&manifest_value),
                     exit_code: json_i32(&manifest_value, &["runtime", "exit_code"])
                         .or_else(|| json_i32(&manifest_value, &["exit_code"])),
                     exec_status,
                 },
-                environment: None,
-                workload: Some(WorkloadContext {
-                    dataset: json_string(&manifest_value, &["workload", "dataset"])
-                        .or_else(|| json_string(&manifest_value, &["dataset"])),
-                    input_count: json_u64(&manifest_value, &["workload", "input_count"])
-                        .or_else(|| json_u64(&manifest_value, &["input_count"])),
-                    command_argv: json_string_array(&manifest_value, &["workload", "command_argv"])
-                        .or_else(|| json_string_array(&manifest_value, &["command"]))
-                        .unwrap_or_default(),
-                    display_command: json_string(&manifest_value, &["workload", "display_command"])
-                        .or_else(|| json_string(&manifest_value, &["display_command"])),
-                    cwd: json_string(&manifest_value, &["workload", "cwd"])
-                        .or_else(|| json_string(&manifest_value, &["cwd"])),
-                    env_snapshot_ref: None,
-                }),
+                environment: optional_environment_context(&manifest_value),
+                workload: optional_workload_context(&manifest_value),
                 summary: SummaryContext {
                     error_count: json_u64(&manifest_value, &["summary", "error_count"])
                         .or_else(|| json_u64(&manifest_value, &["error_count"]))
+                        .or_else(|| {
+                            manifest_value
+                                .get("errors")
+                                .and_then(Value::as_array)
+                                .map(|errors| errors.len() as u64)
+                        })
                         .unwrap_or(0) as u32,
                     warning_count: json_u64(&manifest_value, &["summary", "warning_count"])
                         .or_else(|| json_u64(&manifest_value, &["warning_count"]))
+                        .or_else(|| {
+                            manifest_value
+                                .get("warnings")
+                                .and_then(Value::as_array)
+                                .map(|warnings| warnings.len() as u64)
+                        })
                         .unwrap_or(warnings.len() as u64) as u32,
                 },
                 metrics,
@@ -332,6 +328,118 @@ fn parse_exec_status(value: Option<&str>) -> ExecStatus {
     }
 }
 
+fn started_at_value(value: &Value) -> Option<String> {
+    json_string(value, &["runtime", "started_at"])
+        .or_else(|| json_string(value, &["started_at"]))
+        .or_else(|| json_string(value, &["runtime", "start_time"]))
+        .or_else(|| json_string(value, &["start_time"]))
+}
+
+fn finished_at_value(value: &Value) -> Option<String> {
+    json_string(value, &["runtime", "finished_at"])
+        .or_else(|| json_string(value, &["finished_at"]))
+        .or_else(|| json_string(value, &["runtime", "end_time"]))
+        .or_else(|| json_string(value, &["end_time"]))
+}
+
+fn duration_ms_value(value: &Value) -> Option<u64> {
+    json_u64(value, &["runtime", "duration_ms"])
+        .or_else(|| json_u64(value, &["duration_ms"]))
+        .or_else(|| {
+            json_u64(value, &["runtime", "duration_s"])
+                .or_else(|| json_u64(value, &["duration_s"]))
+                .map(|seconds| seconds.saturating_mul(1000))
+        })
+}
+
+fn optional_environment_context(value: &Value) -> Option<EnvironmentContext> {
+    let model_from_metrics = infer_single_model_from_metrics(value);
+    let context = EnvironmentContext {
+        machine_name: json_string(value, &["environment", "machine_name"])
+            .or_else(|| json_string(value, &["environment", "machine"]))
+            .or_else(|| json_string(value, &["machine_name"]))
+            .or_else(|| json_string(value, &["machine"]))
+            .or_else(|| json_string(value, &["hostname"])),
+        os: json_string(value, &["environment", "os"])
+            .or_else(|| json_string(value, &["os"])),
+        cpu: json_string(value, &["environment", "cpu"])
+            .or_else(|| json_string(value, &["cpu"])),
+        gpu: json_string(value, &["environment", "gpu"])
+            .or_else(|| json_string(value, &["gpu"])),
+        backend: json_string(value, &["environment", "backend"])
+            .or_else(|| json_string(value, &["backend"]))
+            .or_else(|| json_string(value, &["engine"])),
+        model: json_string(value, &["environment", "model"])
+            .or_else(|| json_string(value, &["model"]))
+            .or_else(|| json_string(value, &["model_name"]))
+            .or(model_from_metrics),
+        precision: json_string(value, &["environment", "precision"])
+            .or_else(|| json_string(value, &["precision"])),
+    };
+
+    if context.machine_name.is_none()
+        && context.os.is_none()
+        && context.cpu.is_none()
+        && context.gpu.is_none()
+        && context.backend.is_none()
+        && context.model.is_none()
+        && context.precision.is_none()
+    {
+        None
+    } else {
+        Some(context)
+    }
+}
+
+fn optional_workload_context(value: &Value) -> Option<WorkloadContext> {
+    let command_argv = json_string_array(value, &["workload", "command_argv"])
+        .or_else(|| json_string_array(value, &["command"]))
+        .unwrap_or_default();
+    let display_command = json_string(value, &["workload", "display_command"])
+        .or_else(|| json_string(value, &["display_command"]))
+        .or_else(|| {
+            if command_argv.is_empty() {
+                None
+            } else {
+                Some(command_argv.join(" "))
+            }
+        });
+    let context = WorkloadContext {
+        dataset: json_string(value, &["workload", "dataset"])
+            .or_else(|| json_string(value, &["dataset"])),
+        input_count: json_u64(value, &["workload", "input_count"])
+            .or_else(|| json_u64(value, &["input_count"])),
+        command_argv,
+        display_command,
+        cwd: json_string(value, &["workload", "cwd"])
+            .or_else(|| json_string(value, &["cwd"])),
+        env_snapshot_ref: json_string(value, &["workload", "env_snapshot_ref"])
+            .or_else(|| json_string(value, &["env_snapshot_ref"])),
+    };
+
+    if context.dataset.is_none()
+        && context.input_count.is_none()
+        && context.command_argv.is_empty()
+        && context.display_command.is_none()
+        && context.cwd.is_none()
+        && context.env_snapshot_ref.is_none()
+    {
+        None
+    } else {
+        Some(context)
+    }
+}
+
+fn infer_single_model_from_metrics(value: &Value) -> Option<String> {
+    let by_model = value
+        .get("ux_summary_metric_rows_by_model")
+        .and_then(Value::as_object)?;
+    if by_model.len() == 1 {
+        return by_model.keys().next().cloned();
+    }
+    None
+}
+
 fn parse_metrics(value: &Value, warnings: &mut Vec<AdapterWarning>) -> Vec<MetricRecord> {
     if let Some(metrics) = value.get("metrics").and_then(Value::as_array) {
         let parsed: Vec<_> = metrics.iter().filter_map(parse_metric_row).collect();
@@ -342,7 +450,7 @@ fn parse_metrics(value: &Value, warnings: &mut Vec<AdapterWarning>) -> Vec<Metri
                     .to_string(),
             });
         }
-        return parsed;
+        return shape_localagent_metrics(parsed);
     }
 
     let mut parsed = Vec::new();
@@ -388,11 +496,12 @@ fn parse_metrics(value: &Value, warnings: &mut Vec<AdapterWarning>) -> Vec<Metri
         }
     }
     if parsed_any {
-        return parsed;
+        return shape_localagent_metrics(parsed);
     }
 
     if let Some(metric_map) = value.get("metric_map").and_then(Value::as_object) {
-        return metric_map
+        return shape_localagent_metrics(
+            metric_map
             .iter()
             .filter_map(|(key, raw)| {
                 raw.as_f64().map(|value_num| MetricRecord {
@@ -405,7 +514,8 @@ fn parse_metrics(value: &Value, warnings: &mut Vec<AdapterWarning>) -> Vec<Metri
                     is_primary: false,
                 })
             })
-            .collect();
+            .collect(),
+        );
     }
 
     warnings.push(AdapterWarning {
@@ -413,6 +523,30 @@ fn parse_metrics(value: &Value, warnings: &mut Vec<AdapterWarning>) -> Vec<Metri
         message: "LocalAgent artifact did not expose metrics in a recognized format.".to_string(),
     });
     Vec::new()
+}
+
+fn shape_localagent_metrics(mut metrics: Vec<MetricRecord>) -> Vec<MetricRecord> {
+    for metric in &mut metrics {
+        if is_localagent_detail_metric(&metric.key) {
+            metric.is_primary = false;
+        }
+    }
+
+    if metrics.iter().any(|metric| metric.is_primary) {
+        return metrics;
+    }
+
+    for metric in &mut metrics {
+        if !is_localagent_detail_metric(&metric.key) && metric.direction != MetricDirection::None {
+            metric.is_primary = true;
+        }
+    }
+
+    metrics
+}
+
+fn is_localagent_detail_metric(key: &str) -> bool {
+    key.contains(".by_model.") || key.contains(".by_task_family.")
 }
 
 fn append_metric_rows(
@@ -482,7 +616,7 @@ fn adapter_payload(object: Option<&Map<String, Value>>) -> BTreeMap<String, Valu
     };
 
     let mut localagent = Map::new();
-    for key in ["engine", "pipeline", "variant"] {
+    for key in ["engine", "pipeline", "variant", "backend", "model", "precision"] {
         if let Some(value) = object.get(key) {
             localagent.insert(key.to_string(), value.clone());
         }
@@ -632,12 +766,163 @@ mod tests {
                 && metric.value_num == Some(0.75)
         }));
         assert!(parsed.manifest.metrics.iter().any(|metric| {
+            metric.key == "ux.by_model.qwen2.5-coder-7b-instruct@q8_0.ux.task_success_rate"
+                && !metric.is_primary
+        }));
+        assert!(parsed.manifest.metrics.iter().any(|metric| {
             metric.key == "ux.by_task_family.recovery.ux.failure_stage.validation.count"
                 && metric.value_num == Some(1.0)
         }));
+        assert!(parsed.manifest.metrics.iter().any(|metric| {
+            metric.key == "ux.by_task_family.recovery.ux.task_success_rate"
+                && !metric.is_primary
+        }));
+        let primary_keys: Vec<_> = parsed
+            .manifest
+            .metrics
+            .iter()
+            .filter(|metric| metric.is_primary)
+            .map(|metric| metric.key.as_str())
+            .collect();
+        assert_eq!(
+            primary_keys,
+            vec!["ux.task_success_rate", "ux.validation_completion_rate"]
+        );
         assert!(!parsed
             .warnings
             .iter()
             .any(|warning| warning.code == "missing_metrics"));
+    }
+
+    #[test]
+    fn parse_promotes_non_detail_metrics_when_no_primary_flags_exist() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("localagent_run.json"),
+            r#"{
+                "project":{"slug":"localagent","display_name":"LocalAgent"},
+                "status":"pass",
+                "metrics":[
+                    {"key":"score","value_num":0.97,"unit":"ratio","direction":"higher_is_better","is_primary":false},
+                    {"key":"ux.by_model.qwen2.5.quality","value_num":0.88,"direction":"higher_is_better","is_primary":true},
+                    {"key":"ux.by_task_family.recovery.count","value_num":2.0,"direction":"none","is_primary":true}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let parsed = LocalAgentAdapter.parse(temp.path()).unwrap();
+
+        assert!(parsed
+            .manifest
+            .metrics
+            .iter()
+            .any(|metric| metric.key == "score" && metric.is_primary));
+        assert!(parsed.manifest.metrics.iter().any(|metric| {
+            metric.key == "ux.by_model.qwen2.5.quality" && !metric.is_primary
+        }));
+        assert!(parsed.manifest.metrics.iter().any(|metric| {
+            metric.key == "ux.by_task_family.recovery.count" && !metric.is_primary
+        }));
+    }
+
+    #[test]
+    fn parse_extracts_environment_and_workload_from_localagent_manifest() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("localagent_run.json"),
+            r#"{
+                "project":{"slug":"localagent","display_name":"LocalAgent"},
+                "label":"fixture run",
+                "status":"pass",
+                "started_at":"2026-03-05T17:17:04Z",
+                "finished_at":"2026-03-05T17:18:11Z",
+                "duration_s":67,
+                "command":["localagent","eval","--scenario","assistant_basic"],
+                "dataset":"smoke_set_v1",
+                "input_count":3,
+                "cwd":"C:/work/localagent",
+                "env_snapshot_ref":"attachments/env.redacted.json",
+                "environment":{
+                    "machine_name":"DEVBOX-01",
+                    "os":"Windows 11",
+                    "cpu":"Ryzen 9 7950X",
+                    "gpu":"RTX 4090",
+                    "backend":"local",
+                    "model":"assistant-basic",
+                    "precision":"int8"
+                },
+                "metrics":[
+                    {"key":"score","value_num":0.97,"unit":"ratio","direction":"higher_is_better","is_primary":true}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let parsed = LocalAgentAdapter.parse(temp.path()).unwrap();
+
+        assert_eq!(parsed.manifest.runtime.duration_ms, Some(67_000));
+        assert_eq!(
+            parsed
+                .manifest
+                .environment
+                .as_ref()
+                .and_then(|environment| environment.machine_name.as_deref()),
+            Some("DEVBOX-01")
+        );
+        assert_eq!(
+            parsed
+                .manifest
+                .workload
+                .as_ref()
+                .and_then(|workload| workload.display_command.as_deref()),
+            Some("localagent eval --scenario assistant_basic")
+        );
+        assert_eq!(
+            parsed
+                .manifest
+                .workload
+                .as_ref()
+                .and_then(|workload| workload.env_snapshot_ref.as_deref()),
+            Some("attachments/env.redacted.json")
+        );
+    }
+
+    #[test]
+    fn parse_infers_single_model_from_localagent_metric_exports() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("run.json"),
+            r#"{
+                "project":{"slug":"localagent","display_name":"LocalAgent"},
+                "status":"pass",
+                "command":["localagent","eval"],
+                "ux_summary_metric_rows_by_model":{
+                    "qwen2.5-coder-7b-instruct@q8_0":[
+                        {"key":"ux.task_success_rate","group_name":"ux","value_num":0.75,"direction":"higher_is_better","is_primary":true}
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let parsed = LocalAgentAdapter.parse(temp.path()).unwrap();
+
+        assert_eq!(
+            parsed
+                .manifest
+                .environment
+                .as_ref()
+                .and_then(|environment| environment.model.as_deref()),
+            Some("qwen2.5-coder-7b-instruct@q8_0")
+        );
+        assert_eq!(
+            parsed
+                .manifest
+                .workload
+                .as_ref()
+                .and_then(|workload| workload.display_command.as_deref()),
+            Some("localagent eval")
+        );
     }
 }

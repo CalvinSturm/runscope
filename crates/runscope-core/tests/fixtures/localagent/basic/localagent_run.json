@@ -22,9 +22,20 @@
     "--scenario",
     "assistant_basic"
   ],
+  "display_command": "localagent eval --scenario assistant_basic",
   "cwd": "C:/work/localagent",
+  "env_snapshot_ref": "attachments/env.redacted.json",
   "dataset": "smoke_set_v1",
   "input_count": 3,
+  "environment": {
+    "machine_name": "DEVBOX-01",
+    "os": "Windows 11",
+    "cpu": "Ryzen 9 7950X",
+    "gpu": "RTX 4090",
+    "backend": "local",
+    "model": "assistant-basic",
+    "precision": "int8"
+  },
   "metrics": [
     {
       "key": "score",

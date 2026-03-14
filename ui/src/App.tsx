@@ -88,6 +88,10 @@ export default function App() {
   const [compactSortMode, setCompactSortMode] = useState<CompactSortMode>("latest");
   const [compactMetricKey, setCompactMetricKey] = useState("");
   const [showAllPrimaryMetrics, setShowAllPrimaryMetrics] = useState(false);
+  const [showByModelMetrics, setShowByModelMetrics] = useState(false);
+  const [showByTaskFamilyMetrics, setShowByTaskFamilyMetrics] = useState(false);
+  const [showByModelDiffs, setShowByModelDiffs] = useState(false);
+  const [showByTaskFamilyDiffs, setShowByTaskFamilyDiffs] = useState(false);
   const [pathNotice, setPathNotice] = useState<string | null>(null);
   const [metricSortMode, setMetricSortMode] = useState<MetricSortMode>("severity");
   const [primaryOnlyMetricDiffs, setPrimaryOnlyMetricDiffs] = useState(false);
@@ -361,6 +365,10 @@ export default function App() {
       return;
     }
     setShowAllPrimaryMetrics(false);
+    setShowByModelMetrics(false);
+    setShowByTaskFamilyMetrics(false);
+    setShowByModelDiffs(false);
+    setShowByTaskFamilyDiffs(false);
     const defaultMetric =
       detail.manifest.metrics.find((metric) => metric.is_primary)?.key ??
       detail.manifest.metrics[0]?.key ??
@@ -431,6 +439,11 @@ export default function App() {
     .join(" · ");
   const hasPrimaryMetricsCount = items.filter((item) => item.primary_metrics.length > 0).length;
   const baselineRunCount = items.filter((item) => activeBaselineRunIds.has(item.run_id)).length;
+  const isLocalAgentRun = detail?.manifest.source.adapter === "localagent";
+  const topLevelMetrics = detail?.manifest.metrics.filter((metric) => !isLocalAgentBreakdownMetric(metric.key)) ?? [];
+  const byModelMetrics = detail?.manifest.metrics.filter((metric) => metric.key.includes(".by_model.")) ?? [];
+  const byTaskFamilyMetrics =
+    detail?.manifest.metrics.filter((metric) => metric.key.includes(".by_task_family.")) ?? [];
   const curatedPrimaryMetrics = selectCuratedMetrics(primaryMetrics);
   const visiblePrimaryMetrics = showAllPrimaryMetrics
     ? primaryMetrics
@@ -459,6 +472,11 @@ export default function App() {
     compareTriggeredFlags,
     metricSortMode,
     { primaryOnly: primaryOnlyMetricDiffs, changedOnly: changedOnlyMetricDiffs },
+  );
+  const topLevelMetricDiffs = sortedMetricDiffs.filter((diff) => !isLocalAgentBreakdownMetric(diff.key));
+  const byModelMetricDiffs = sortedMetricDiffs.filter((diff) => diff.key.includes(".by_model."));
+  const byTaskFamilyMetricDiffs = sortedMetricDiffs.filter((diff) =>
+    diff.key.includes(".by_task_family."),
   );
   const candidatePrimaryMetric = compareSummary
     ? compareSummary.primary_metrics.find((metric) => metric.key === compactMetricKey) ?? null
@@ -912,9 +930,19 @@ export default function App() {
                 isCompareTarget && compareTriggeredFlags.length > 0;
               const compareSemanticForRow =
                 !isSelected && compareMode ? compareSemanticMap[item.run_id] ?? null : null;
-              const visibleMetrics = item.primary_metrics.slice(0, 3);
-              const hiddenMetricCount = Math.max(0, item.primary_metrics.length - visibleMetrics.length);
+              const rowPrimaryMetrics = selectRunCardPrimaryMetrics(item);
+              const visibleMetrics = rowPrimaryMetrics.slice(0, 3);
+              const hiddenMetricCount = Math.max(0, rowPrimaryMetrics.length - visibleMetrics.length);
               const runTitle = item.label ?? item.scenario ?? item.run_id;
+              const compactCompareCue = compareMode
+                ? isSelected
+                  ? "base"
+                  : isCompareTarget
+                    ? "candidate"
+                    : compareSemanticForRow && compareSemanticForRow !== "stable"
+                      ? formatCompareSemantic(compareSemanticForRow)
+                      : null
+                : null;
               return (
                 <button
                   key={item.run_id}
@@ -995,8 +1023,22 @@ export default function App() {
                           ? `${compactMetricLabel(visibleMetrics[0].key)} ${formatMetric(visibleMetrics[0])}`
                           : "No primary metrics"}
                       </span>
-                      <span className="compact-summary-right">
-                        {hiddenMetricCount > 0 ? `+${hiddenMetricCount} more` : EMPTY_TOKEN}
+                      <span
+                        className={`compact-summary-right ${compactCompareCue ? "has-cue" : ""}`}
+                      >
+                        {compactCompareCue ? (
+                          <span
+                            className={`compact-compare-cue ${
+                              compareSemanticForRow ?? (isCompareTarget ? "candidate" : isSelected ? "base" : "")
+                            }`}
+                          >
+                            {compactCompareCue}
+                          </span>
+                        ) : hiddenMetricCount > 0 ? (
+                          `+${hiddenMetricCount} more`
+                        ) : (
+                          EMPTY_TOKEN
+                        )}
                       </span>
                     </div>
                   )}
@@ -1519,8 +1561,8 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {sortedMetricDiffs.length > 0 ? (
-                            sortedMetricDiffs.map((diff) => {
+                          {(isLocalAgentRun ? topLevelMetricDiffs : sortedMetricDiffs).length > 0 ? (
+                            (isLocalAgentRun ? topLevelMetricDiffs : sortedMetricDiffs).map((diff) => {
                               const semantic = classifyMetricDiffSemantic(diff, semanticFlagKeys.has(diff.key));
                               return (
                             <tr key={`${diff.group_name}:${diff.key}`} className={`metric-diff-row semantic-${semantic}`}>
@@ -1545,7 +1587,9 @@ export default function App() {
                           ) : (
                             <tr>
                               <td colSpan={6} className="quiet">
-                                No metric diffs matched the current compare filters.
+                                {isLocalAgentRun
+                                  ? "No top-level metric diffs matched the current compare filters."
+                                  : "No metric diffs matched the current compare filters."}
                               </td>
                             </tr>
                           )}
@@ -1553,6 +1597,128 @@ export default function App() {
                       </table>
                     </div>
                   </Panel>
+
+                  {isLocalAgentRun && byModelMetricDiffs.length > 0 ? (
+                    <Panel
+                      title="By Model Diffs"
+                      subtitle="Model-specific LocalAgent diff drill-down kept separate from the top-level compare signal."
+                      className="subtle-panel"
+                    >
+                      <div className="panel-actions">
+                        <button
+                          className="utility-button"
+                          onClick={() => setShowByModelDiffs((current) => !current)}
+                          type="button"
+                        >
+                          {showByModelDiffs ? "Hide By Model Diffs" : `Show By Model Diffs ${byModelMetricDiffs.length}`}
+                        </button>
+                      </div>
+                      {showByModelDiffs ? (
+                        <div className="table-scroll-shell metric-diffs-shell">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Metric</th>
+                                <th>State</th>
+                                <th>Base</th>
+                                <th>Candidate</th>
+                                <th>Abs Delta</th>
+                                <th>Percent Delta</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {byModelMetricDiffs.map((diff) => {
+                                const semantic = classifyMetricDiffSemantic(diff, semanticFlagKeys.has(diff.key));
+                                return (
+                                  <tr key={`${diff.group_name}:${diff.key}`} className={`metric-diff-row semantic-${semantic}`}>
+                                    <td>
+                                      <div className="metric-name-cell">
+                                        <strong>{compactMetricLabel(diff.key)}</strong>
+                                        <span>{formatOptionalText(diff.group_name)}</span>
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <span className={`semantic-badge ${semantic}`}>
+                                        {formatCompareSemantic(semantic)}
+                                      </span>
+                                    </td>
+                                    <td>{formatDiffMetric(diff.left_num, diff.left_text, diff.unit)}</td>
+                                    <td>{formatDiffMetric(diff.right_num, diff.right_text, diff.unit)}</td>
+                                    <td>{formatNumericDelta(diff.abs_delta, diff.unit)}</td>
+                                    <td>{formatPercentDelta(diff.pct_delta)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <span className="quiet">Hidden until needed so model-level LocalAgent deltas stay drill-down only.</span>
+                      )}
+                    </Panel>
+                  ) : null}
+
+                  {isLocalAgentRun && byTaskFamilyMetricDiffs.length > 0 ? (
+                    <Panel
+                      title="By Task Family Diffs"
+                      subtitle="Task-family LocalAgent diff drill-down preserved without crowding the top-level compare view."
+                      className="subtle-panel"
+                    >
+                      <div className="panel-actions">
+                        <button
+                          className="utility-button"
+                          onClick={() => setShowByTaskFamilyDiffs((current) => !current)}
+                          type="button"
+                        >
+                          {showByTaskFamilyDiffs
+                            ? "Hide By Task Family Diffs"
+                            : `Show By Task Family Diffs ${byTaskFamilyMetricDiffs.length}`}
+                        </button>
+                      </div>
+                      {showByTaskFamilyDiffs ? (
+                        <div className="table-scroll-shell metric-diffs-shell">
+                          <table className="data-table">
+                            <thead>
+                              <tr>
+                                <th>Metric</th>
+                                <th>State</th>
+                                <th>Base</th>
+                                <th>Candidate</th>
+                                <th>Abs Delta</th>
+                                <th>Percent Delta</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {byTaskFamilyMetricDiffs.map((diff) => {
+                                const semantic = classifyMetricDiffSemantic(diff, semanticFlagKeys.has(diff.key));
+                                return (
+                                  <tr key={`${diff.group_name}:${diff.key}`} className={`metric-diff-row semantic-${semantic}`}>
+                                    <td>
+                                      <div className="metric-name-cell">
+                                        <strong>{compactMetricLabel(diff.key)}</strong>
+                                        <span>{formatOptionalText(diff.group_name)}</span>
+                                      </div>
+                                    </td>
+                                    <td>
+                                      <span className={`semantic-badge ${semantic}`}>
+                                        {formatCompareSemantic(semantic)}
+                                      </span>
+                                    </td>
+                                    <td>{formatDiffMetric(diff.left_num, diff.left_text, diff.unit)}</td>
+                                    <td>{formatDiffMetric(diff.right_num, diff.right_text, diff.unit)}</td>
+                                    <td>{formatNumericDelta(diff.abs_delta, diff.unit)}</td>
+                                    <td>{formatPercentDelta(diff.pct_delta)}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <span className="quiet">Hidden until needed so task-family LocalAgent deltas stay in drill-down territory.</span>
+                      )}
+                    </Panel>
+                  ) : null}
 
                   <Panel title="Artifact Diffs" subtitle="Artifact presence and managed relative path changes between the two runs.">
                     <table className="data-table">
@@ -1667,7 +1833,11 @@ export default function App() {
 
               <Panel
                 title="All Metrics"
-                subtitle="Reference-grade normalized metric records from the canonical manifest."
+                subtitle={
+                  isLocalAgentRun
+                    ? "Top-level normalized metrics first. LocalAgent model and task-family breakdowns sit below as drill-down reference."
+                    : "Reference-grade normalized metric records from the canonical manifest."
+                }
                 className="subtle-panel"
               >
                 <div className="table-scroll-shell metrics-table-shell">
@@ -1682,7 +1852,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {detail.manifest.metrics.map((metric) => (
+                      {topLevelMetrics.map((metric) => (
                         <tr key={`${metric.group_name}:${metric.key}`}>
                           <td>{metric.key}</td>
                           <td>{formatOptionalText(metric.group_name)}</td>
@@ -1695,6 +1865,100 @@ export default function App() {
                   </table>
                 </div>
               </Panel>
+
+              {isLocalAgentRun && byModelMetrics.length > 0 ? (
+                <Panel
+                  title="By Model Metrics"
+                  subtitle="LocalAgent model-specific drill-down metrics preserved for inspection and compare reference."
+                  className="subtle-panel"
+                >
+                  <div className="panel-actions">
+                    <button
+                      className="utility-button"
+                      onClick={() => setShowByModelMetrics((current) => !current)}
+                      type="button"
+                    >
+                      {showByModelMetrics ? "Hide By Model" : `Show By Model ${byModelMetrics.length}`}
+                    </button>
+                  </div>
+                  {showByModelMetrics ? (
+                    <div className="table-scroll-shell metrics-table-shell">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Key</th>
+                            <th>Group</th>
+                            <th>Value</th>
+                            <th>Direction</th>
+                            <th>Primary</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {byModelMetrics.map((metric) => (
+                            <tr key={`${metric.group_name}:${metric.key}`}>
+                              <td>{metric.key}</td>
+                              <td>{formatOptionalText(metric.group_name)}</td>
+                              <td>{formatMetric(metric)}</td>
+                              <td>{metric.direction.replace(/_/g, " ")}</td>
+                              <td>{metric.is_primary ? "yes" : EMPTY_TOKEN}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <span className="quiet">Hidden until needed to keep the top-level metric view compact.</span>
+                  )}
+                </Panel>
+              ) : null}
+
+              {isLocalAgentRun && byTaskFamilyMetrics.length > 0 ? (
+                <Panel
+                  title="By Task Family Metrics"
+                  subtitle="LocalAgent task-family breakdown metrics kept available without crowding the top-level metric view."
+                  className="subtle-panel"
+                >
+                  <div className="panel-actions">
+                    <button
+                      className="utility-button"
+                      onClick={() => setShowByTaskFamilyMetrics((current) => !current)}
+                      type="button"
+                    >
+                      {showByTaskFamilyMetrics
+                        ? "Hide By Task Family"
+                        : `Show By Task Family ${byTaskFamilyMetrics.length}`}
+                    </button>
+                  </div>
+                  {showByTaskFamilyMetrics ? (
+                    <div className="table-scroll-shell metrics-table-shell">
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Key</th>
+                            <th>Group</th>
+                            <th>Value</th>
+                            <th>Direction</th>
+                            <th>Primary</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {byTaskFamilyMetrics.map((metric) => (
+                            <tr key={`${metric.group_name}:${metric.key}`}>
+                              <td>{metric.key}</td>
+                              <td>{formatOptionalText(metric.group_name)}</td>
+                              <td>{formatMetric(metric)}</td>
+                              <td>{metric.direction.replace(/_/g, " ")}</td>
+                              <td>{metric.is_primary ? "yes" : EMPTY_TOKEN}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <span className="quiet">Hidden until needed so task-family drill-down does not dominate the detail pane.</span>
+                  )}
+                </Panel>
+              ) : null}
 
               <Panel title="Artifacts" subtitle="Managed relative paths preserved under the local run root.">
                 <table className="data-table">
@@ -2014,6 +2278,19 @@ function hasMeaningfulMetricChange(diff: CompareReport["metric_diffs"][number]):
     diff.left_text !== diff.right_text ||
     diff.left_num !== diff.right_num
   );
+}
+
+function isLocalAgentBreakdownMetric(key: string): boolean {
+  return key.includes(".by_model.") || key.includes(".by_task_family.");
+}
+
+function selectRunCardPrimaryMetrics(item: RunListItem): MetricRecord[] {
+  if (item.adapter !== "localagent") {
+    return item.primary_metrics;
+  }
+
+  const topLevelMetrics = item.primary_metrics.filter((metric) => !isLocalAgentBreakdownMetric(metric.key));
+  return topLevelMetrics.length > 0 ? topLevelMetrics : item.primary_metrics;
 }
 
 function formatCompareSemantic(semantic: CompareSemantic): string {
