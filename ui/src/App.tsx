@@ -37,7 +37,6 @@ import type {
 
 type FilterState = {
   queryText: string;
-  project: string;
   execStatus: "" | ExecStatus;
   backend: string;
   model: string;
@@ -51,15 +50,19 @@ type CompareSemanticFilter = "all" | "regressed" | "improved" | "changed" | "unr
 
 const initialFilters: FilterState = {
   queryText: "",
-  project: "",
   execStatus: "",
   backend: "",
   model: "",
   precision: "",
 };
 
+const ALL_PROJECTS_TAB = "__all_projects__";
+
 export default function App() {
   const [filters, setFilters] = useState<FilterState>(initialFilters);
+  const [projectTabs, setProjectTabs] = useState<string[]>([]);
+  const [projectRunCounts, setProjectRunCounts] = useState<Record<string, number>>({});
+  const [activeProject, setActiveProject] = useState<string>(ALL_PROJECTS_TAB);
   const deferredQueryText = useDeferredValue(filters.queryText);
   const [items, setItems] = useState<RunListItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -106,6 +109,51 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
+      try {
+        const page = await listRuns({ limit: 250, offset: 0 });
+        if (cancelled) {
+          return;
+        }
+        const nextProjects = Array.from(
+          new Set(page.items.map((item) => item.project_slug).filter((slug) => slug.trim().length > 0)),
+        ).sort((left, right) => left.localeCompare(right));
+        const nextProjectCounts = page.items.reduce<Record<string, number>>((accumulator, item) => {
+          accumulator[item.project_slug] = (accumulator[item.project_slug] ?? 0) + 1;
+          return accumulator;
+        }, {});
+        setProjectTabs(nextProjects);
+        setProjectRunCounts(nextProjectCounts);
+        setActiveProject((current) => {
+          if (current === ALL_PROJECTS_TAB) {
+            return current;
+          }
+          return nextProjects.includes(current) ? current : ALL_PROJECTS_TAB;
+        });
+      } catch (caught) {
+        if (!cancelled) {
+          setError(String(caught));
+        }
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    setSelectedRunId(null);
+    setCompareTargetId(null);
+    setCompareReport(null);
+    setCandidateDetail(null);
+    setCompareSemanticMap({});
+    setCompareSemanticFilter("all");
+    setCompareSemanticSort(false);
+  }, [activeProject]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
       setLoadingList(true);
       setError(null);
       try {
@@ -116,7 +164,7 @@ export default function App() {
             : null;
         const filter: RunListFilter = {
           query_text: specialQuery ? undefined : deferredQueryText || undefined,
-          project: filters.project || undefined,
+          project: activeProject === ALL_PROJECTS_TAB ? undefined : activeProject,
           exec_status: filters.execStatus || undefined,
           backend: filters.backend || undefined,
           model: filters.model || undefined,
@@ -181,7 +229,7 @@ export default function App() {
     filters.execStatus,
     filters.model,
     filters.precision,
-    filters.project,
+    activeProject,
     projectBaselines,
     selectedRunId,
   ]);
@@ -533,24 +581,6 @@ export default function App() {
   );
   const filterChips = [
     {
-      label: "LocalAgent",
-      active: filters.project === "localagent",
-      onClick: () =>
-        setFilters((current) => ({
-          ...current,
-          project: current.project === "localagent" ? "" : "localagent",
-        })),
-    },
-    {
-      label: "VideoForge",
-      active: filters.project === "videoforge",
-      onClick: () =>
-        setFilters((current) => ({
-          ...current,
-          project: current.project === "videoforge" ? "" : "videoforge",
-        })),
-    },
-    {
       label: "Has metrics",
       active: filters.queryText === "has:metrics",
       onClick: () =>
@@ -695,6 +725,42 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      <section className="project-tabs-panel">
+        <div className="section-heading compact">
+          <div>
+            <p className="section-label">Projects</p>
+            <h2>{activeProject === ALL_PROJECTS_TAB ? "All project workspaces" : activeProject}</h2>
+          </div>
+          <span className="quiet">
+            {projectTabs.length} project{projectTabs.length === 1 ? "" : "s"} in the local store
+          </span>
+        </div>
+        <div className="project-tab-row">
+          <button
+            className={`project-tab ${activeProject === ALL_PROJECTS_TAB ? "active" : ""}`}
+            onClick={() => setActiveProject(ALL_PROJECTS_TAB)}
+            type="button"
+          >
+            <strong>All Projects</strong>
+            <span>{total} visible</span>
+          </button>
+          {projectTabs.map((project) => {
+            const projectCount = projectRunCounts[project] ?? 0;
+            return (
+              <button
+                key={project}
+                className={`project-tab ${activeProject === project ? "active" : ""}`}
+                onClick={() => setActiveProject(project)}
+                type="button"
+              >
+                <strong>{project}</strong>
+                <span>{projectCount} visible</span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <section className="hero">
         <div className="hero-copy">
           <p className="eyebrow">RunScope Dashboard</p>
@@ -737,12 +803,6 @@ export default function App() {
           value={filters.queryText}
           onChange={(value) => setFilters((current) => ({ ...current, queryText: value }))}
           placeholder="run id, label, scenario, backend, model"
-        />
-        <FilterField
-          label="Project"
-          value={filters.project}
-          onChange={(value) => setFilters((current) => ({ ...current, project: value }))}
-          placeholder="videoforge or localagent"
         />
         <label>
           Status
@@ -794,7 +854,7 @@ export default function App() {
           </button>
         ))}
         <span className="quiet filter-chip-summary">
-          {hasPrimaryMetricsCount} runs with primary metrics · {baselineRunCount} active baselines in current project view
+          {activeProject === ALL_PROJECTS_TAB ? "All projects" : activeProject} · {hasPrimaryMetricsCount} runs with primary metrics · {baselineRunCount} active baselines in current project view
         </span>
       </section>
 
