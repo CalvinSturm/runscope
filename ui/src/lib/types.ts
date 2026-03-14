@@ -77,6 +77,61 @@ export interface RunManifest {
   };
   metrics: MetricRecord[];
   artifacts: ArtifactRecord[];
+  adapter_payload?: Record<string, unknown>;
+}
+
+export interface LocalAgentEvalSummary {
+  total_runs?: number;
+  passed?: number;
+  failed?: number;
+  skipped?: number;
+  pass_rate?: number;
+}
+
+export interface LocalAgentEvalConfig {
+  provider?: string;
+  pack?: string;
+  mode?: string;
+  models?: string[];
+  runs_per_task?: number;
+  max_steps?: number;
+  timeout_seconds?: number;
+  instruction_model_profile?: string;
+  instruction_task_profile?: string;
+  instruction_task_profile_task_kind?: string;
+  task_kind?: string;
+  planner_model?: string;
+  worker_model?: string;
+  resolved_profile_name?: string;
+  resolved_profile_path?: string;
+  resolved_profile_hash_hex?: string;
+}
+
+export interface LocalAgentEvalRollups {
+  avg_steps?: number;
+  avg_tool_calls?: number;
+  avg_wall_time_ms?: number;
+  avg_verifier_time_ms?: number;
+  total_estimated_cost_usd?: number;
+  total_prompt_tokens?: number;
+  total_completion_tokens?: number;
+  total_tokens?: number;
+  verifier_ok_runs?: number;
+  verifier_failed_runs?: number;
+  exit_reasons?: Record<string, number>;
+  failure_reasons?: Record<string, number>;
+}
+
+export interface LocalAgentPayload {
+  engine?: string;
+  pipeline?: string;
+  variant?: string;
+  backend?: string;
+  model?: string;
+  precision?: string;
+  eval_summary?: LocalAgentEvalSummary;
+  eval_config?: LocalAgentEvalConfig;
+  eval_rollups?: LocalAgentEvalRollups;
 }
 
 export interface RunListFilter {

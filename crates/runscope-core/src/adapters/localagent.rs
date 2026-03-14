@@ -621,10 +621,233 @@ fn adapter_payload(object: Option<&Map<String, Value>>) -> BTreeMap<String, Valu
             localagent.insert(key.to_string(), value.clone());
         }
     }
+    if let Some(eval_summary) = localagent_eval_summary_payload(object) {
+        localagent.insert("eval_summary".to_string(), eval_summary);
+    }
+    if let Some(eval_config) = localagent_eval_config_payload(object) {
+        localagent.insert("eval_config".to_string(), eval_config);
+    }
+    if let Some(eval_rollups) = localagent_eval_rollups_payload(object) {
+        localagent.insert("eval_rollups".to_string(), eval_rollups);
+    }
     if !localagent.is_empty() {
         payload.insert("localagent".to_string(), Value::Object(localagent));
     }
     payload
+}
+
+fn localagent_eval_summary_payload(object: &Map<String, Value>) -> Option<Value> {
+    let summary = object.get("summary")?.as_object()?;
+    let mut normalized = Map::new();
+    copy_json_field(summary, "total_runs", &mut normalized);
+    copy_json_field(summary, "passed", &mut normalized);
+    copy_json_field(summary, "failed", &mut normalized);
+    copy_json_field(summary, "skipped", &mut normalized);
+    copy_json_field(summary, "pass_rate", &mut normalized);
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(Value::Object(normalized))
+    }
+}
+
+fn localagent_eval_config_payload(object: &Map<String, Value>) -> Option<Value> {
+    let config = object.get("config")?.as_object()?;
+    let mut normalized = Map::new();
+    for key in [
+        "provider",
+        "pack",
+        "mode",
+        "runs_per_task",
+        "max_steps",
+        "timeout_seconds",
+        "instruction_model_profile",
+        "instruction_task_profile",
+        "instruction_task_profile_task_kind",
+        "task_kind",
+        "planner_model",
+        "worker_model",
+        "resolved_profile_name",
+        "resolved_profile_path",
+        "resolved_profile_hash_hex",
+    ] {
+        copy_json_field(config, key, &mut normalized);
+    }
+    if let Some(models) = config.get("models").and_then(Value::as_array) {
+        let models: Vec<_> = models
+            .iter()
+            .filter_map(|value| value.as_str().map(|value| Value::String(value.to_string())))
+            .collect();
+        if !models.is_empty() {
+            normalized.insert("models".to_string(), Value::Array(models));
+        }
+    }
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(Value::Object(normalized))
+    }
+}
+
+fn localagent_eval_rollups_payload(object: &Map<String, Value>) -> Option<Value> {
+    let runs = object.get("runs")?.as_array()?;
+    if runs.is_empty() {
+        return None;
+    }
+
+    let mut total_steps: u64 = 0;
+    let mut total_tool_calls: u64 = 0;
+    let mut total_wall_time_ms: u64 = 0;
+    let mut total_verifier_time_ms: u64 = 0;
+    let mut total_estimated_cost_usd = 0.0;
+    let mut total_prompt_tokens: u64 = 0;
+    let mut total_completion_tokens: u64 = 0;
+    let mut total_tokens: u64 = 0;
+    let mut counted_metrics_runs: u64 = 0;
+    let mut counted_cost_runs: u64 = 0;
+    let mut counted_token_runs: u64 = 0;
+    let mut verifier_ok_runs: u64 = 0;
+    let mut verifier_failed_runs: u64 = 0;
+    let mut exit_reason_counts = BTreeMap::<String, u64>::new();
+    let mut failure_reason_counts = BTreeMap::<String, u64>::new();
+
+    for run in runs.iter().filter_map(Value::as_object) {
+        if let Some(exit_reason) = run.get("exit_reason").and_then(Value::as_str) {
+            *exit_reason_counts.entry(exit_reason.to_string()).or_insert(0) += 1;
+        }
+        if let Some(failures) = run.get("failures").and_then(Value::as_array) {
+            for failure in failures.iter().filter_map(Value::as_str) {
+                *failure_reason_counts.entry(failure.to_string()).or_insert(0) += 1;
+            }
+        }
+        if let Some(metrics) = run.get("metrics").and_then(Value::as_object) {
+            total_steps = total_steps.saturating_add(metrics.get("steps").and_then(Value::as_u64).unwrap_or(0));
+            total_tool_calls = total_tool_calls
+                .saturating_add(metrics.get("tool_calls").and_then(Value::as_u64).unwrap_or(0));
+            total_wall_time_ms = total_wall_time_ms.saturating_add(
+                metrics
+                    .get("wall_time_ms")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            );
+            total_verifier_time_ms = total_verifier_time_ms.saturating_add(
+                metrics
+                    .get("verifier_time_ms")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            );
+            counted_metrics_runs = counted_metrics_runs.saturating_add(1);
+        }
+        if let Some(estimated_cost) = run.get("estimated_cost_usd").and_then(Value::as_f64) {
+            total_estimated_cost_usd += estimated_cost;
+            counted_cost_runs = counted_cost_runs.saturating_add(1);
+        }
+        if let Some(tokens) = run.get("tokens").and_then(Value::as_object) {
+            total_prompt_tokens = total_prompt_tokens.saturating_add(
+                tokens
+                    .get("prompt_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            );
+            total_completion_tokens = total_completion_tokens.saturating_add(
+                tokens
+                    .get("completion_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+            );
+            total_tokens = total_tokens.saturating_add(
+                tokens.get("total_tokens").and_then(Value::as_u64).unwrap_or(0),
+            );
+            counted_token_runs = counted_token_runs.saturating_add(1);
+        }
+        if let Some(verifier) = run.get("verifier").and_then(Value::as_object) {
+            match (
+                verifier.get("ran").and_then(Value::as_bool),
+                verifier.get("ok").and_then(Value::as_bool),
+            ) {
+                (Some(true), Some(true)) => verifier_ok_runs = verifier_ok_runs.saturating_add(1),
+                (Some(true), Some(false)) => {
+                    verifier_failed_runs = verifier_failed_runs.saturating_add(1)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut normalized = Map::new();
+    if counted_metrics_runs > 0 {
+        normalized.insert(
+            "avg_steps".to_string(),
+            Value::from(total_steps as f64 / counted_metrics_runs as f64),
+        );
+        normalized.insert(
+            "avg_tool_calls".to_string(),
+            Value::from(total_tool_calls as f64 / counted_metrics_runs as f64),
+        );
+        normalized.insert(
+            "avg_wall_time_ms".to_string(),
+            Value::from(total_wall_time_ms as f64 / counted_metrics_runs as f64),
+        );
+        normalized.insert(
+            "avg_verifier_time_ms".to_string(),
+            Value::from(total_verifier_time_ms as f64 / counted_metrics_runs as f64),
+        );
+    }
+    if counted_cost_runs > 0 {
+        normalized.insert(
+            "total_estimated_cost_usd".to_string(),
+            Value::from(total_estimated_cost_usd),
+        );
+    }
+    if counted_token_runs > 0 {
+        normalized.insert("total_prompt_tokens".to_string(), Value::from(total_prompt_tokens));
+        normalized.insert(
+            "total_completion_tokens".to_string(),
+            Value::from(total_completion_tokens),
+        );
+        normalized.insert("total_tokens".to_string(), Value::from(total_tokens));
+    }
+    if verifier_ok_runs > 0 || verifier_failed_runs > 0 {
+        normalized.insert("verifier_ok_runs".to_string(), Value::from(verifier_ok_runs));
+        normalized.insert(
+            "verifier_failed_runs".to_string(),
+            Value::from(verifier_failed_runs),
+        );
+    }
+    if !exit_reason_counts.is_empty() {
+        normalized.insert(
+            "exit_reasons".to_string(),
+            Value::Object(
+                exit_reason_counts
+                    .into_iter()
+                    .map(|(key, value)| (key, Value::from(value)))
+                    .collect(),
+            ),
+        );
+    }
+    if !failure_reason_counts.is_empty() {
+        normalized.insert(
+            "failure_reasons".to_string(),
+            Value::Object(
+                failure_reason_counts
+                    .into_iter()
+                    .map(|(key, value)| (key, Value::from(value)))
+                    .collect(),
+            ),
+        );
+    }
+
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(Value::Object(normalized))
+    }
+}
+
+fn copy_json_field(source: &Map<String, Value>, key: &str, target: &mut Map<String, Value>) {
+    if let Some(value) = source.get(key) {
+        target.insert(key.to_string(), value.clone());
+    }
 }
 
 fn json_string(root: &Value, path: &[&str]) -> Option<String> {
@@ -923,6 +1146,109 @@ mod tests {
                 .as_ref()
                 .and_then(|workload| workload.display_command.as_deref()),
             Some("localagent eval")
+        );
+    }
+
+    #[test]
+    fn parse_promotes_localagent_eval_summary_config_and_rollups_into_adapter_payload() {
+        let temp = tempdir().unwrap();
+        fs::write(
+            temp.path().join("run.json"),
+            r#"{
+                "schema_version":"openagent.eval.v1",
+                "created_at":"2026-03-07T22:20:30Z",
+                "config":{
+                    "provider":"ollama",
+                    "models":["qwen2.5-coder-7b-instruct@q8_0"],
+                    "pack":"commoncodingux",
+                    "mode":"single",
+                    "runs_per_task":2,
+                    "max_steps":60,
+                    "timeout_seconds":120,
+                    "instruction_task_profile":"common-coding-ux",
+                    "instruction_task_profile_task_kind":"coding",
+                    "resolved_profile_name":"common-coding-ux"
+                },
+                "summary":{
+                    "total_runs":4,
+                    "passed":3,
+                    "failed":1,
+                    "skipped":0,
+                    "pass_rate":0.75
+                },
+                "runs":[
+                    {
+                        "model":"qwen2.5-coder-7b-instruct@q8_0",
+                        "task_id":"task-a",
+                        "run_index":0,
+                        "run_id":"run-a",
+                        "exit_reason":"completed",
+                        "status":"passed",
+                        "required_flags":[],
+                        "passed":true,
+                        "failures":[],
+                        "stats":{"steps":10,"tool_calls":4},
+                        "metrics":{"steps":10,"tool_calls":4,"tool_sequence":[],"tool_calls_by_side_effects":{},"bytes_read":100,"bytes_written":50,"wall_time_ms":1200,"verifier_time_ms":200,"provider":{"http_retries":0,"provider_errors":0},"tool_retries":0,"tool_failures_by_class":{},"step_invariant_violations":0},
+                        "tokens":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150},
+                        "estimated_cost_usd":0.12,
+                        "verifier":{"ran":true,"ok":true,"summary":"ok","stdout_truncated":false,"stderr_truncated":false},
+                        "ux_metric_rows":[]
+                    },
+                    {
+                        "model":"qwen2.5-coder-7b-instruct@q8_0",
+                        "task_id":"task-b",
+                        "run_index":0,
+                        "run_id":"run-b",
+                        "exit_reason":"max_steps",
+                        "status":"failed",
+                        "required_flags":[],
+                        "passed":false,
+                        "failures":["validation_failed"],
+                        "stats":{"steps":20,"tool_calls":6},
+                        "metrics":{"steps":20,"tool_calls":6,"tool_sequence":[],"tool_calls_by_side_effects":{},"bytes_read":200,"bytes_written":70,"wall_time_ms":2400,"verifier_time_ms":300,"provider":{"http_retries":0,"provider_errors":0},"tool_retries":1,"tool_failures_by_class":{},"step_invariant_violations":0},
+                        "tokens":{"prompt_tokens":200,"completion_tokens":90,"total_tokens":290},
+                        "estimated_cost_usd":0.24,
+                        "verifier":{"ran":true,"ok":false,"summary":"failed","stdout_truncated":false,"stderr_truncated":false},
+                        "ux_metric_rows":[]
+                    }
+                ],
+                "ux_summary_metric_rows":[
+                    {"key":"ux.task_success_rate","group_name":"ux","value_num":0.5,"direction":"higher_is_better","is_primary":true}
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let parsed = LocalAgentAdapter.parse(temp.path()).unwrap();
+        let localagent = parsed
+            .manifest
+            .adapter_payload
+            .get("localagent")
+            .and_then(Value::as_object)
+            .unwrap();
+        let eval_summary = localagent.get("eval_summary").and_then(Value::as_object).unwrap();
+        let eval_config = localagent.get("eval_config").and_then(Value::as_object).unwrap();
+        let eval_rollups = localagent.get("eval_rollups").and_then(Value::as_object).unwrap();
+
+        assert_eq!(eval_summary.get("total_runs").and_then(Value::as_u64), Some(4));
+        assert_eq!(eval_config.get("pack").and_then(Value::as_str), Some("commoncodingux"));
+        assert_eq!(eval_config.get("mode").and_then(Value::as_str), Some("single"));
+        assert_eq!(eval_rollups.get("avg_steps").and_then(Value::as_f64), Some(15.0));
+        assert_eq!(
+            eval_rollups.get("total_tokens").and_then(Value::as_u64),
+            Some(440)
+        );
+        assert_eq!(
+            eval_rollups.get("verifier_failed_runs").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            eval_rollups
+                .get("failure_reasons")
+                .and_then(Value::as_object)
+                .and_then(|value| value.get("validation_failed"))
+                .and_then(Value::as_u64),
+            Some(1)
         );
     }
 }

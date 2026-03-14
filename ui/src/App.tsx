@@ -26,6 +26,7 @@ import type {
   CreateRegressionRuleRequest,
   CompareReport,
   ExecStatus,
+  LocalAgentPayload,
   MetricRecord,
   RegressionComparator,
   RegressionRule,
@@ -440,6 +441,8 @@ export default function App() {
   const hasPrimaryMetricsCount = items.filter((item) => item.primary_metrics.length > 0).length;
   const baselineRunCount = items.filter((item) => activeBaselineRunIds.has(item.run_id)).length;
   const isLocalAgentRun = detail?.manifest.source.adapter === "localagent";
+  const localAgentPayload = getLocalAgentPayload(detail?.manifest);
+  const candidateLocalAgentPayload = getLocalAgentPayload(candidateDetail?.manifest);
   const topLevelMetrics = detail?.manifest.metrics.filter((metric) => !isLocalAgentBreakdownMetric(metric.key)) ?? [];
   const byModelMetrics = detail?.manifest.metrics.filter((metric) => metric.key.includes(".by_model.")) ?? [];
   const byTaskFamilyMetrics =
@@ -1425,6 +1428,79 @@ export default function App() {
                     </Panel>
                   </section>
 
+                  {localAgentPayload?.eval_summary || localAgentPayload?.eval_config || localAgentPayload?.eval_rollups ? (
+                    <Panel
+                      title="LocalAgent Eval Compare"
+                      subtitle="Selected LocalAgent eval summary, config provenance, and derived rollups surfaced from the preserved raw payload."
+                    >
+                      <div className="detail-grid secondary">
+                        <InfoCard title="Base Eval Summary" subtle>
+                          <InfoRow
+                            label="Total runs"
+                            value={formatOptionalNumber(localAgentPayload?.eval_summary?.total_runs)}
+                          />
+                          <InfoRow
+                            label="Passed"
+                            value={formatOptionalNumber(localAgentPayload?.eval_summary?.passed)}
+                          />
+                          <InfoRow
+                            label="Failed"
+                            value={formatOptionalNumber(localAgentPayload?.eval_summary?.failed)}
+                          />
+                          <InfoRow
+                            label="Pass rate"
+                            value={formatOptionalPercent(localAgentPayload?.eval_summary?.pass_rate)}
+                          />
+                        </InfoCard>
+                        <InfoCard title="Candidate Eval Summary" subtle>
+                          <InfoRow
+                            label="Total runs"
+                            value={formatOptionalNumber(candidateLocalAgentPayload?.eval_summary?.total_runs)}
+                          />
+                          <InfoRow
+                            label="Passed"
+                            value={formatOptionalNumber(candidateLocalAgentPayload?.eval_summary?.passed)}
+                          />
+                          <InfoRow
+                            label="Failed"
+                            value={formatOptionalNumber(candidateLocalAgentPayload?.eval_summary?.failed)}
+                          />
+                          <InfoRow
+                            label="Pass rate"
+                            value={formatOptionalPercent(candidateLocalAgentPayload?.eval_summary?.pass_rate)}
+                          />
+                        </InfoCard>
+                        <InfoCard title="Base Eval Config" subtle>
+                          <InfoRow label="Pack" value={localAgentPayload?.eval_config?.pack} />
+                          <InfoRow label="Mode" value={localAgentPayload?.eval_config?.mode} />
+                          <InfoRow label="Provider" value={localAgentPayload?.eval_config?.provider} />
+                          <InfoRow
+                            label="Models"
+                            value={formatOptionalText(localAgentPayload?.eval_config?.models?.join(", "))}
+                          />
+                        </InfoCard>
+                        <InfoCard title="Base Eval Rollups" subtle>
+                          <InfoRow
+                            label="Avg steps"
+                            value={formatOptionalNumber(localAgentPayload?.eval_rollups?.avg_steps, 1)}
+                          />
+                          <InfoRow
+                            label="Avg tool calls"
+                            value={formatOptionalNumber(localAgentPayload?.eval_rollups?.avg_tool_calls, 1)}
+                          />
+                          <InfoRow
+                            label="Avg wall time"
+                            value={formatDuration(localAgentPayload?.eval_rollups?.avg_wall_time_ms ?? null)}
+                          />
+                          <InfoRow
+                            label="Total tokens"
+                            value={formatOptionalNumber(localAgentPayload?.eval_rollups?.total_tokens)}
+                          />
+                        </InfoCard>
+                      </div>
+                    </Panel>
+                  ) : null}
+
                   <Panel
                     title="Warning Delta"
                     subtitle="Shared, introduced, and resolved warnings split so newly suspicious runs stand out immediately."
@@ -1794,6 +1870,95 @@ export default function App() {
                   <InfoRow label="Env snapshot" value={detail.manifest.workload?.env_snapshot_ref} />
                 </InfoCard>
               </section>
+
+              {localAgentPayload?.eval_summary || localAgentPayload?.eval_config || localAgentPayload?.eval_rollups ? (
+                <Panel
+                  title="LocalAgent Eval"
+                  subtitle="Aggregate eval summary, selected config provenance, and derived run rollups promoted from the preserved raw payload."
+                  className="subtle-panel"
+                >
+                  <div className="detail-grid secondary">
+                    <InfoCard title="Eval Summary" subtle>
+                      <InfoRow
+                        label="Total runs"
+                        value={formatOptionalNumber(localAgentPayload?.eval_summary?.total_runs)}
+                      />
+                      <InfoRow
+                        label="Passed"
+                        value={formatOptionalNumber(localAgentPayload?.eval_summary?.passed)}
+                      />
+                      <InfoRow
+                        label="Failed"
+                        value={formatOptionalNumber(localAgentPayload?.eval_summary?.failed)}
+                      />
+                      <InfoRow
+                        label="Skipped"
+                        value={formatOptionalNumber(localAgentPayload?.eval_summary?.skipped)}
+                      />
+                      <InfoRow
+                        label="Pass rate"
+                        value={formatOptionalPercent(localAgentPayload?.eval_summary?.pass_rate)}
+                      />
+                    </InfoCard>
+                    <InfoCard title="Eval Config" subtle>
+                      <InfoRow label="Pack" value={localAgentPayload?.eval_config?.pack} />
+                      <InfoRow label="Mode" value={localAgentPayload?.eval_config?.mode} />
+                      <InfoRow label="Provider" value={localAgentPayload?.eval_config?.provider} />
+                      <InfoRow
+                        label="Models"
+                        value={formatOptionalText(localAgentPayload?.eval_config?.models?.join(", "))}
+                      />
+                      <InfoRow
+                        label="Profile"
+                        value={
+                          localAgentPayload?.eval_config?.resolved_profile_name ??
+                          localAgentPayload?.eval_config?.instruction_task_profile
+                        }
+                      />
+                    </InfoCard>
+                    <InfoCard title="Run Rollups" subtle>
+                      <InfoRow
+                        label="Avg steps"
+                        value={formatOptionalNumber(localAgentPayload?.eval_rollups?.avg_steps, 1)}
+                      />
+                      <InfoRow
+                        label="Avg tool calls"
+                        value={formatOptionalNumber(localAgentPayload?.eval_rollups?.avg_tool_calls, 1)}
+                      />
+                      <InfoRow
+                        label="Avg wall time"
+                        value={formatDuration(localAgentPayload?.eval_rollups?.avg_wall_time_ms ?? null)}
+                      />
+                      <InfoRow
+                        label="Avg verifier"
+                        value={formatDuration(localAgentPayload?.eval_rollups?.avg_verifier_time_ms ?? null)}
+                      />
+                      <InfoRow
+                        label="Total tokens"
+                        value={formatOptionalNumber(localAgentPayload?.eval_rollups?.total_tokens)}
+                      />
+                    </InfoCard>
+                    <InfoCard title="Outcome Signals" subtle>
+                      <InfoRow
+                        label="Verifier ok"
+                        value={formatOptionalNumber(localAgentPayload?.eval_rollups?.verifier_ok_runs)}
+                      />
+                      <InfoRow
+                        label="Verifier failed"
+                        value={formatOptionalNumber(localAgentPayload?.eval_rollups?.verifier_failed_runs)}
+                      />
+                      <InfoRow
+                        label="Exit reasons"
+                        value={formatCountMap(localAgentPayload?.eval_rollups?.exit_reasons)}
+                      />
+                      <InfoRow
+                        label="Failure reasons"
+                        value={formatCountMap(localAgentPayload?.eval_rollups?.failure_reasons)}
+                      />
+                    </InfoCard>
+                  </div>
+                </Panel>
+              ) : null}
 
               <Panel
                 title="Key Metrics"
@@ -2284,6 +2449,17 @@ function isLocalAgentBreakdownMetric(key: string): boolean {
   return key.includes(".by_model.") || key.includes(".by_task_family.");
 }
 
+function getLocalAgentPayload(manifest: RunDetail["manifest"] | null | undefined): LocalAgentPayload | null {
+  if (!manifest) {
+    return null;
+  }
+  const localagent = manifest.adapter_payload?.localagent;
+  if (!localagent || typeof localagent !== "object") {
+    return null;
+  }
+  return localagent as LocalAgentPayload;
+}
+
 function selectRunCardPrimaryMetrics(item: RunListItem): MetricRecord[] {
   if (item.adapter !== "localagent") {
     return item.primary_metrics;
@@ -2307,6 +2483,35 @@ function formatCompareSemantic(semantic: CompareSemantic): string {
     return "Unresolved";
   }
   return "Stable";
+}
+
+function formatOptionalNumber(value: number | undefined, digits = 0): string | null {
+  if (value == null || Number.isNaN(value)) {
+    return null;
+  }
+  return digits > 0 ? value.toFixed(digits) : value.toFixed(0);
+}
+
+function formatOptionalPercent(value: number | undefined): string | null {
+  if (value == null || Number.isNaN(value)) {
+    return null;
+  }
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatCountMap(value: Record<string, number> | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  const entries = Object.entries(value);
+  if (entries.length === 0) {
+    return null;
+  }
+  return entries
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3)
+    .map(([key, count]) => `${key} ${count}`)
+    .join(" · ");
 }
 
 function deriveCompareSemanticFromReport(
